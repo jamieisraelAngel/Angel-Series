@@ -1,0 +1,6 @@
+{
+  "name": "El-Roi 3D & Molecular Structure Viewer",
+  "description": "Advanced 3D model inspector and Mol* molecular structure viewer for CAD, meshes, and PDB/mmCIF macromolecular biology research.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
