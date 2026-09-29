@@ -26,6 +26,7 @@ export const ToolbarMolstar: React.FC<ToolbarMolstarProps> = ({
   onFitView,
 }) => {
   const [showRepDropdown, setShowRepDropdown] = useState(false);
+  const [showColorDropdown, setShowColorDropdown] = useState(false);
   const [showLightingDropdown, setShowLightingDropdown] = useState(false);
 
   const representations: { id: MolecularRepresentation; label: string; desc: string }[] = [
@@ -36,6 +37,44 @@ export const ToolbarMolstar: React.FC<ToolbarMolstarProps> = ({
     { id: 'putty', label: 'B-Factor Putty', desc: 'Ribbon thickness reflects mobility' },
     { id: 'backbone', label: 'Backbone Trace', desc: 'Cα / P polymer chain trace' },
   ];
+
+  const colorSchemes: { id: MolecularColorScheme; label: string; desc: string; swatch?: string }[] = [
+    {
+      id: 'confidence',
+      label: 'Model Confidence (pLDDT)',
+      desc: '4-band AlphaFold / B-factor confidence scale',
+      swatch: 'linear-gradient(90deg, #0053D6 0%, #65CBF3 45%, #FFDB13 75%, #FF7D45 100%)',
+    },
+    {
+      id: 'b-factor',
+      label: 'B-Factor / Mobility',
+      desc: 'Thermal atomic displacement gradient (Å²)',
+      swatch: 'linear-gradient(90deg, #1e64eb 0%, #50dcd7 40%, #ffc832 75%, #ff371e 100%)',
+    },
+    {
+      id: 'secondary-structure',
+      label: 'Secondary Structure',
+      desc: 'Helices, beta sheets & coil loops',
+    },
+    {
+      id: 'chain-id',
+      label: 'Polymer Chain ID',
+      desc: 'Distinct color per macromolecular chain',
+    },
+    {
+      id: 'element',
+      label: 'Atomic Element (CPK)',
+      desc: 'Standard chemical element coloring',
+    },
+    {
+      id: 'residue-type',
+      label: 'Residue Amino Acid',
+      desc: 'Color by amino acid / nucleotide identity',
+    },
+  ];
+
+  const activeColorLabel =
+    colorSchemes.find((c) => c.id === settings.colorScheme)?.label.split(' (')[0] || 'Confidence';
 
   const lightings: { id: 'matte' | 'flat' | 'metallic'; label: string }[] = [
     { id: 'matte', label: 'Matte Shading' },
@@ -66,6 +105,7 @@ export const ToolbarMolstar: React.FC<ToolbarMolstarProps> = ({
           id="molstar-btn-rep"
           onClick={() => {
             setShowRepDropdown(!showRepDropdown);
+            setShowColorDropdown(false);
             setShowLightingDropdown(false);
           }}
           title="Molecular Representation"
@@ -110,6 +150,79 @@ export const ToolbarMolstar: React.FC<ToolbarMolstarProps> = ({
 
       <div className="w-[1px] h-6 bg-slate-700 mx-1" />
 
+      {/* Color Scheme / Model Confidence Dropdown */}
+      <div className="relative">
+        <button
+          id="molstar-btn-color-scheme"
+          onClick={() => {
+            setShowColorDropdown(!showColorDropdown);
+            setShowRepDropdown(false);
+            setShowLightingDropdown(false);
+          }}
+          title="Color Scheme & Model Confidence (pLDDT)"
+          className={`px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors ${
+            showColorDropdown
+              ? 'bg-indigo-600 text-white'
+              : settings.colorScheme === 'confidence'
+              ? 'bg-sky-500/15 border border-sky-500/40 text-sky-200 hover:bg-sky-500/25'
+              : 'hover:bg-slate-800 text-slate-200'
+          }`}
+        >
+          <Palette className="w-4 h-4 text-sky-400" />
+          <span>{activeColorLabel}</span>
+          <ChevronDown className="w-3 h-3 opacity-70" />
+        </button>
+
+        {showColorDropdown && (
+          <div
+            id="molstar-dropdown-color-scheme"
+            className="absolute bottom-full mb-2 left-0 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 z-30"
+          >
+            <div className="px-2 py-1 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+              Coloring & Confidence
+            </div>
+            {colorSchemes.map((scheme) => (
+              <button
+                key={scheme.id}
+                onClick={() => {
+                  onChangeSettings({ colorScheme: scheme.id });
+                  setShowColorDropdown(false);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 text-xs rounded-lg transition-colors flex flex-col gap-1 ${
+                  settings.colorScheme === scheme.id
+                    ? 'bg-indigo-600 text-white'
+                    : 'hover:bg-slate-800 text-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <div className="font-medium">{scheme.label}</div>
+                    <div
+                      className={`text-[10px] ${
+                        settings.colorScheme === scheme.id ? 'text-indigo-200' : 'text-slate-400'
+                      }`}
+                    >
+                      {scheme.desc}
+                    </div>
+                  </div>
+                  {settings.colorScheme === scheme.id && (
+                    <Check className="w-3.5 h-3.5 shrink-0 ml-2" />
+                  )}
+                </div>
+                {scheme.swatch && (
+                  <div
+                    className="w-full h-1.5 rounded-full mt-0.5"
+                    style={{ background: scheme.swatch }}
+                  />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="w-[1px] h-6 bg-slate-700 mx-1" />
+
       {/* Lighting Style Dropdown */}
       <div className="relative">
         <button
@@ -117,6 +230,7 @@ export const ToolbarMolstar: React.FC<ToolbarMolstarProps> = ({
           onClick={() => {
             setShowLightingDropdown(!showLightingDropdown);
             setShowRepDropdown(false);
+            setShowColorDropdown(false);
           }}
           title="Lighting & Material Shading"
           className={`px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-colors ${

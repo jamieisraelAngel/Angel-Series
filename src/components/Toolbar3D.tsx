@@ -31,12 +31,17 @@ interface Toolbar3DProps {
   onToggleAutoRotate: () => void;
   showWireframe: boolean;
   onToggleWireframe: () => void;
+  showBoundingBox?: boolean;
+  onToggleBoundingBox?: () => void;
   showGrid: boolean;
   onToggleGrid: () => void;
   showEdges: boolean;
   onToggleEdges: () => void;
   shading: ShadingMode;
   onChangeShading: (mode: ShadingMode) => void;
+  lightingPreset?: 'studio' | 'sunset' | 'neutral' | 'high_contrast' | 'cyberpunk';
+  onChangeLightingPreset?: (preset: 'studio' | 'sunset' | 'neutral' | 'high_contrast' | 'cyberpunk') => void;
+  onTakeSnapshot?: () => void;
 }
 
 export const Toolbar3D: React.FC<Toolbar3DProps> = ({
@@ -53,15 +58,21 @@ export const Toolbar3D: React.FC<Toolbar3DProps> = ({
   onToggleAutoRotate,
   showWireframe,
   onToggleWireframe,
+  showBoundingBox = false,
+  onToggleBoundingBox,
   showGrid,
   onToggleGrid,
   showEdges,
   onToggleEdges,
   shading,
   onChangeShading,
+  lightingPreset = 'studio',
+  onChangeLightingPreset,
+  onTakeSnapshot,
 }) => {
   const [showViewsDropdown, setShowViewsDropdown] = React.useState(false);
   const [showShadingDropdown, setShowShadingDropdown] = React.useState(false);
+  const [showLightingDropdown, setShowLightingDropdown] = React.useState(false);
 
   const viewPresets: { id: ViewPreset; label: string }[] = [
     { id: 'iso', label: 'Isometric' },
@@ -216,6 +227,59 @@ export const Toolbar3D: React.FC<Toolbar3DProps> = ({
         )}
       </div>
 
+      {/* Lighting Preset Dropdown */}
+      {onChangeLightingPreset && (
+        <div className="relative">
+          <button
+            id="toolbar-btn-lighting"
+            onClick={() => {
+              setShowLightingDropdown(!showLightingDropdown);
+              setShowViewsDropdown(false);
+              setShowShadingDropdown(false);
+            }}
+            title="Lighting Presets (Studio, Sunset, Neutral, Cyberpunk)"
+            className={`p-2.5 rounded-xl transition-colors flex items-center gap-1 ${
+              showLightingDropdown ? 'bg-slate-700 text-amber-400' : 'hover:bg-slate-800 text-slate-300'
+            }`}
+          >
+            <SunMedium className="w-4 h-4 text-amber-400" />
+            <ChevronDown className="w-3 h-3 opacity-60" />
+          </button>
+
+          {showLightingDropdown && (
+            <div
+              id="toolbar-dropdown-lighting"
+              className="absolute bottom-full mb-2 left-0 w-44 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 z-30"
+            >
+              <div className="px-2 py-1 text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                Lighting Preset
+              </div>
+              {[
+                { id: 'studio', label: 'Studio Warm' },
+                { id: 'sunset', label: 'Golden Sunset' },
+                { id: 'neutral', label: 'Clean Neutral' },
+                { id: 'high_contrast', label: 'High Contrast' },
+                { id: 'cyberpunk', label: 'Cyberpunk Neon' },
+              ].map((lp) => (
+                <button
+                  key={lp.id}
+                  onClick={() => {
+                    onChangeLightingPreset(lp.id as any);
+                    setShowLightingDropdown(false);
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 text-xs rounded-lg transition-colors flex items-center justify-between ${
+                    lightingPreset === lp.id ? 'bg-amber-500/20 text-amber-300 font-semibold' : 'hover:bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  <span>{lp.label}</span>
+                  {lightingPreset === lp.id && <Check className="w-3.5 h-3.5 text-amber-400" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Cross Section Slice Tool */}
       <button
         id="toolbar-btn-section-plane"
@@ -250,13 +314,27 @@ export const Toolbar3D: React.FC<Toolbar3DProps> = ({
       <button
         id="toolbar-btn-wireframe"
         onClick={onToggleWireframe}
-        title="Toggle Wireframe Overlay"
+        title="Toggle Wireframe Overlay (W)"
         className={`p-2.5 rounded-xl transition-colors flex items-center justify-center ${
           showWireframe ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'
         }`}
       >
-        <Eye className="w-4 h-4" />
+        <span className="text-[11px] font-mono font-bold">WF</span>
       </button>
+
+      {/* Bounding Box Toggle */}
+      {onToggleBoundingBox && (
+        <button
+          id="toolbar-btn-bbox"
+          onClick={onToggleBoundingBox}
+          title="Toggle Geometric Bounding Box (B)"
+          className={`p-2.5 rounded-xl transition-colors flex items-center justify-center ${
+            showBoundingBox ? 'bg-amber-500 text-slate-950 font-bold' : 'hover:bg-slate-800 text-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-mono font-bold">BB</span>
+        </button>
+      )}
 
       {/* Edge Outlines Toggle */}
       <button
@@ -293,6 +371,18 @@ export const Toolbar3D: React.FC<Toolbar3DProps> = ({
       >
         <RotateCw className={`w-4 h-4 ${autoRotate ? 'animate-spin' : ''}`} />
       </button>
+
+      {/* Quick High-Res Snapshot */}
+      {onTakeSnapshot && (
+        <button
+          id="toolbar-btn-quick-snapshot"
+          onClick={onTakeSnapshot}
+          title="Capture High-Res Screenshot"
+          className="p-2.5 rounded-xl hover:bg-slate-800 text-slate-200 hover:text-white transition-colors flex items-center justify-center"
+        >
+          <Camera className="w-4 h-4 text-cyan-400" />
+        </button>
+      )}
     </div>
   );
 };

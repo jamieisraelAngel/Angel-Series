@@ -58,6 +58,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
   const modelGroupRef = useRef<THREE.Group | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
   const axesHelperRef = useRef<THREE.AxesHelper | null>(null);
+  const boxHelperRef = useRef<THREE.BoxHelper | null>(null);
   const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
   const ambLightRef = useRef<THREE.AmbientLight | null>(null);
 
@@ -66,7 +67,8 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
   const activeActionRef = useRef<THREE.AnimationAction | null>(null);
 
   // Clipping plane
-  const localPlaneRef = useRef<THREE.Plane>(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
+  const clippingPlaneRef = useRef<THREE.Plane>(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
+  const clipVisualPlaneRef = useRef<THREE.Mesh | null>(null);
 
   // Measurement objects
   const measureGroupRef = useRef<THREE.Group>(new THREE.Group());
@@ -207,7 +209,12 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
         activeCam.updateProjectionMatrix();
       }
 
+      const wasClipVisible = clipVisualPlaneRef.current ? clipVisualPlaneRef.current.visible : false;
+      if (clipVisualPlaneRef.current) clipVisualPlaneRef.current.visible = false;
+
       renderer.render(scene, activeCam);
+
+      if (clipVisualPlaneRef.current) clipVisualPlaneRef.current.visible = wasClipVisible;
 
       const mimeType = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png';
       const dataUrl = renderer.domElement.toDataURL(mimeType, 0.95);
@@ -303,6 +310,31 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     // Measurement Group
     scene.add(measureGroupRef.current);
 
+    // Visual helper plane for cross-section clipping (amber/orange semi-transparent)
+    const clipGeo = new THREE.PlaneGeometry(1, 1);
+    const clipMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const clipMesh = new THREE.Mesh(clipGeo, clipMat);
+    clipMesh.name = '__helper_clip_mesh';
+    clipMesh.visible = false;
+
+    const clipBorderGeo = new THREE.EdgesGeometry(clipGeo);
+    const clipBorderMat = new THREE.LineBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.5,
+    });
+    const clipBorder = new THREE.LineSegments(clipBorderGeo, clipBorderMat);
+    clipMesh.add(clipBorder);
+
+    scene.add(clipMesh);
+    clipVisualPlaneRef.current = clipMesh;
+
     // Animation Loop
     const animate = () => {
       animFrameRef.current = requestAnimationFrame(animate);
@@ -322,6 +354,10 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
         controlsRef.current.autoRotateSpeed = settings.autoRotateSpeed || 2.0;
       } else if (controlsRef.current) {
         controlsRef.current.autoRotate = false;
+      }
+
+      if (boxHelperRef.current) {
+        boxHelperRef.current.update();
       }
 
       controlsRef.current?.update();
@@ -362,6 +398,11 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     return () => {
       window.removeEventListener('resize', handleResize);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      renderer.clippingPlanes = [];
+      clipGeo.dispose();
+      clipMat.dispose();
+      clipBorderGeo.dispose();
+      clipBorderMat.dispose();
       renderer.dispose();
       controls.dispose();
     };
@@ -493,6 +534,24 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     if (axesHelperRef.current) axesHelperRef.current.visible = settings.showAxes;
   }, [settings.showGrid, settings.showAxes]);
 
+  // Update Bounding Box Helper
+  useEffect(() => {
+    if (!sceneRef.current || !modelGroupRef.current) return;
+
+    if (boxHelperRef.current) {
+      sceneRef.current.remove(boxHelperRef.current);
+      boxHelperRef.current.dispose();
+      boxHelperRef.current = null;
+    }
+
+    if (settings.showBoundingBox && model) {
+      const helper = new THREE.BoxHelper(modelGroupRef.current, 0xf59e0b);
+      helper.name = '__helper_bbox';
+      sceneRef.current.add(helper);
+      boxHelperRef.current = helper;
+    }
+  }, [settings.showBoundingBox, model]);
+
   // Update Shading Mode
   useEffect(() => {
     if (!modelGroupRef.current) return;
@@ -540,7 +599,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
         if (child.material) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
           mats.forEach((m) => {
-            m.clippingPlanes = sectionPlane.enabled ? [localPlaneRef.current] : [];
+            m.clippingPlanes = sectionPlane.enabled ? [clippingPlaneRef.current] : [];
             m.clipShadows = true;
           });
         }
@@ -550,29 +609,73 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
   // Update Cross-Section Clipping Plane
   useEffect(() => {
-    if (!modelGroupRef.current) return;
-    const box = new THREE.Box3().setFromObject(modelGroupRef.current);
+    const modelObject = model || modelGroupRef.current;
+    if (!rendererRef.current || !clippingPlaneRef.current || !modelObject) return;
+
+    if (!sectionPlane.enabled) {
+      rendererRef.current.clippingPlanes = [];
+      rendererRef.current.localClippingEnabled = false;
+      if (clipVisualPlaneRef.current) clipVisualPlaneRef.current.visible = false;
+      return;
+    }
+
+    const box = new THREE.Box3().setFromObject(modelObject);
+    if (box.isEmpty()) return;
+
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
     box.getSize(size);
     box.getCenter(center);
 
     const normal = new THREE.Vector3();
-    if (sectionPlane.axis === 'x') normal.set(1, 0, 0);
-    else if (sectionPlane.axis === 'y') normal.set(0, 1, 0);
-    else normal.set(0, 0, 1);
+    let constant = 0;
+    const sign = sectionPlane.inverted ? -1 : 1;
 
-    if (sectionPlane.inverted) normal.negate();
-
-    const maxDim = size[sectionPlane.axis] || 1;
-    const constant = -((center[sectionPlane.axis] || 0) + (sectionPlane.position * maxDim) / 2);
-
-    localPlaneRef.current.set(normal, constant);
-
-    if (rendererRef.current) {
-      rendererRef.current.localClippingEnabled = sectionPlane.enabled;
+    if (sectionPlane.axis === 'x') {
+      normal.set(-sign, 0, 0);
+      const halfW = size.x / 2;
+      constant = sign * (center.x + sectionPlane.position * halfW);
+    } else if (sectionPlane.axis === 'y') {
+      normal.set(0, -sign, 0);
+      const halfH = size.y / 2;
+      constant = sign * (center.y + sectionPlane.position * halfH);
+    } else {
+      normal.set(0, 0, -sign);
+      const halfD = size.z / 2;
+      constant = sign * (center.z + sectionPlane.position * halfD);
     }
-  }, [sectionPlane]);
+
+    clippingPlaneRef.current.set(normal, constant);
+    rendererRef.current.localClippingEnabled = true;
+    rendererRef.current.clippingPlanes = [clippingPlaneRef.current];
+
+    // Position visual helper plane
+    if (clipVisualPlaneRef.current) {
+      clipVisualPlaneRef.current.visible = true;
+      const maxDim = Math.max(size.x, size.y, size.z) * 1.5;
+      clipVisualPlaneRef.current.scale.set(maxDim, maxDim, 1);
+
+      if (sectionPlane.axis === 'x') {
+        clipVisualPlaneRef.current.position.set(center.x + sectionPlane.position * (size.x / 2), center.y, center.z);
+        clipVisualPlaneRef.current.rotation.set(0, Math.PI / 2, 0);
+      } else if (sectionPlane.axis === 'y') {
+        clipVisualPlaneRef.current.position.set(center.x, center.y + sectionPlane.position * (size.y / 2), center.z);
+        clipVisualPlaneRef.current.rotation.set(Math.PI / 2, 0, 0);
+      } else {
+        clipVisualPlaneRef.current.position.set(center.x, center.y, center.z + sectionPlane.position * (size.z / 2));
+        clipVisualPlaneRef.current.rotation.set(0, 0, 0);
+      }
+    }
+
+    return () => {
+      if (rendererRef.current) {
+        rendererRef.current.clippingPlanes = [];
+      }
+      if (clipVisualPlaneRef.current) {
+        clipVisualPlaneRef.current.visible = false;
+      }
+    };
+  }, [sectionPlane, model]);
 
   // Handle Measurement Mouse Clicks
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {

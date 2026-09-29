@@ -10,7 +10,21 @@ export type ViewerMode = 'three' | 'molstar';
 
 export type MolecularRepresentation = 'cartoon' | 'ball-and-stick' | 'spacefill' | 'surface' | 'putty' | 'backbone';
 
-export type MolecularColorScheme = 'secondary-structure' | 'chain-id' | 'b-factor' | 'element' | 'residue-type';
+export type MolecularColorScheme =
+  | 'confidence'
+  | 'b-factor'
+  | 'secondary-structure'
+  | 'chain-id'
+  | 'element'
+  | 'residue-type';
+
+export interface ResidueConfidence {
+  chainId: string;
+  resSeq: number;
+  resName: string;
+  score: number; // 0-100 pLDDT confidence score
+  rawBFactor: number; // raw B-factor / tempFactor from file
+}
 
 export interface ModelStats {
   vertices: number;
@@ -44,6 +58,7 @@ export interface MeshNodeItem {
 export interface MaterialInfo {
   id: string;
   name: string;
+  type?: string;
   color: string;
   roughness: number;
   metalness: number;
@@ -61,6 +76,7 @@ export interface RenderSettings {
   edgeThresholdAngle: number;
   showWireframe: boolean;
   wireframeColor: string;
+  showBoundingBox?: boolean;
   showGrid: boolean;
   gridSize: number;
   gridDivisions: number;
@@ -82,7 +98,7 @@ export interface SectionPlaneState {
   axis: 'x' | 'y' | 'z';
   position: number;
   inverted: boolean;
-  showCap: boolean;
+  showCap?: boolean;
 }
 
 export interface MeasurePoint {
@@ -121,9 +137,14 @@ export interface MolecularChainInfo {
 
 export interface MolecularLigandInfo {
   id: string;
+  chemId: string;
   name: string;
+  chainId: string;
+  resSeq: number;
   count: number;
+  formula?: string;
   description?: string;
+  visible: boolean;
 }
 
 export interface MolecularStats {
@@ -143,6 +164,17 @@ export interface MolecularStats {
   fileFormat: 'PDB' | 'mmCIF' | 'BCIF';
   fileSize?: number;
   fileName: string;
+  residueConfidences?: ResidueConfidence[];
+  avgConfidence?: number;
+  minBFactor?: number;
+  maxBFactor?: number;
+  isPredictedModel?: boolean;
+  confidenceDistribution?: {
+    veryHigh: number; // > 90
+    confident: number; // 70 - 90
+    low: number; // 50 - 70
+    veryLow: number; // <= 50
+  };
 }
 
 export interface MolstarSettings {
@@ -154,3 +186,45 @@ export interface MolstarSettings {
   customBackgroundColor: string;
   expandedControls: boolean;
 }
+
+export type AssetCategory = '3d-model' | 'script' | 'shader' | 'molecular' | 'archive';
+export type AssetTier = 'standard' | 'rare' | 'relic' | 'masterwork' | 'experimental';
+
+export interface AIAnalysisResult {
+  summary: string;
+  topologyOrQuality: string;
+  documentation: string;
+  performanceTips: string[];
+  suggestedTags: string[];
+  compatibilityNotes?: string;
+  complexityScore?: number;
+  timestamp?: string;
+}
+
+export interface ArchiveItem {
+  id: string;
+  name: string;
+  description: string;
+  category: AssetCategory;
+  format: string; // 'glb' | 'gltf' | 'obj' | 'stl' | 'mmcif' | 'pdb' | 'py' | 'ts' | 'cuda' | 'hlsl'
+  size: number;
+  tier: AssetTier;
+  tags: string[];
+  dateAdded: string;
+  author?: string;
+  license?: string;
+  version?: string;
+  compatibility?: string[]; // e.g. ['Blender 4.2', 'Three.js r160', 'PyTorch 2.4']
+  fileUrl?: string; // transient Object URL
+  blob?: Blob; // stored in IndexedDB
+  codeContent?: string; // for scripts and shaders
+  thumbnailUrl?: string;
+  aiAnalysis?: AIAnalysisResult;
+  stats?: ModelStats | MolecularStats;
+  sampleType?: 'torus' | 'gear' | 'crystal' | 'pdb';
+  pdbId?: string;
+}
+
+export type ArchiveSortField = 'dateAdded' | 'name' | 'size' | 'tier';
+export type SortOrder = 'asc' | 'desc';
+

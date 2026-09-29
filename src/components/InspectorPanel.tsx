@@ -217,6 +217,131 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       </div>
                     </div>
                   </div>
+
+                  {/* Model Confidence (pLDDT) & B-Factor Card */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Model Confidence & Coloring
+                      </span>
+                      {molecularStats.avgConfidence !== undefined && (
+                        <span className="text-[10px] font-mono font-bold text-sky-400">
+                          Avg: {molecularStats.avgConfidence.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2.5">
+                      {/* Color Scheme Switcher */}
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(
+                          [
+                            { id: 'confidence', label: 'pLDDT Confidence' },
+                            { id: 'b-factor', label: 'B-Factor Mobility' },
+                            { id: 'secondary-structure', label: 'Secondary Struct' },
+                            { id: 'chain-id', label: 'Polymer Chain' },
+                            { id: 'element', label: 'Element (CPK)' },
+                            { id: 'residue-type', label: 'Residue Type' },
+                          ] as const
+                        ).map((scheme) => (
+                          <button
+                            key={scheme.id}
+                            onClick={() => onChangeMolstarSettings({ colorScheme: scheme.id })}
+                            className={`px-2 py-1.5 rounded-lg border text-[11px] text-left transition-colors ${
+                              molstarSettings.colorScheme === scheme.id
+                                ? 'bg-indigo-600/30 border-indigo-500 text-white font-semibold'
+                                : 'bg-slate-900/60 border-slate-700/60 text-slate-300 hover:bg-slate-800'
+                            }`}
+                          >
+                            {scheme.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 4-Band Confidence Distribution */}
+                      {molecularStats.confidenceDistribution && (
+                        <div className="space-y-1.5 pt-1 border-t border-slate-700/60">
+                          <div className="w-full h-2 rounded-full overflow-hidden flex bg-slate-900">
+                            <div
+                              style={{
+                                width: `${molecularStats.confidenceDistribution.veryHigh}%`,
+                                backgroundColor: '#0053D6',
+                              }}
+                            />
+                            <div
+                              style={{
+                                width: `${molecularStats.confidenceDistribution.confident}%`,
+                                backgroundColor: '#65CBF3',
+                              }}
+                            />
+                            <div
+                              style={{
+                                width: `${molecularStats.confidenceDistribution.low}%`,
+                                backgroundColor: '#FFDB13',
+                              }}
+                            />
+                            <div
+                              style={{
+                                width: `${molecularStats.confidenceDistribution.veryLow}%`,
+                                backgroundColor: '#FF7D45',
+                              }}
+                            />
+                          </div>
+
+                          <div className="space-y-1 text-[11px]">
+                            <div className="flex items-center justify-between">
+                              <span className="flex items-center gap-1.5 text-slate-300">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-sm"
+                                  style={{ backgroundColor: '#0053D6' }}
+                                />
+                                <span>Very High (&gt;90)</span>
+                              </span>
+                              <span className="font-mono text-slate-200">
+                                {molecularStats.confidenceDistribution.veryHigh}%
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="flex items-center gap-1.5 text-slate-300">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-sm"
+                                  style={{ backgroundColor: '#65CBF3' }}
+                                />
+                                <span>Confident (70–90)</span>
+                              </span>
+                              <span className="font-mono text-slate-200">
+                                {molecularStats.confidenceDistribution.confident}%
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="flex items-center gap-1.5 text-slate-300">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-sm"
+                                  style={{ backgroundColor: '#FFDB13' }}
+                                />
+                                <span>Low (50–70)</span>
+                              </span>
+                              <span className="font-mono text-slate-200">
+                                {molecularStats.confidenceDistribution.low}%
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="flex items-center gap-1.5 text-slate-300">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-sm"
+                                  style={{ backgroundColor: '#FF7D45' }}
+                                />
+                                <span>Very Low (&lt;50)</span>
+                              </span>
+                              <span className="font-mono text-slate-200">
+                                {molecularStats.confidenceDistribution.veryLow}%
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </>
               ) : (
                 <div className="text-slate-500 text-center py-10">No molecule loaded</div>

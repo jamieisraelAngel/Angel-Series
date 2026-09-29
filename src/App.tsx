@@ -10,6 +10,7 @@ import {
   MaterialInfo,
   MeshNodeItem,
   ModelStats,
+  MolecularLigandInfo,
   MolecularStats,
   MolstarSettings,
   ProjectionMode,
@@ -19,6 +20,7 @@ import {
   ShadingMode,
   ViewerMode,
   ViewPreset,
+  ArchiveItem,
 } from './types';
 import {
   buildMeshHierarchy,
@@ -37,6 +39,8 @@ import {
   SAMPLE_PDB_STRUCTURES,
 } from './utils/molecularHelpers';
 
+import { initVaultStorage, saveAsset, deleteAsset } from './lib/db';
+
 import { Header } from './components/Header';
 import { Viewport3D } from './components/Viewport3D';
 import { Toolbar3D } from './components/Toolbar3D';
@@ -51,7 +55,10 @@ import { SnapshotModal } from './components/SnapshotModal';
 import { ShareModal } from './components/ShareModal';
 import { AboutModal } from './components/AboutModal';
 import { DropZoneOverlay } from './components/DropZoneOverlay';
-import { Loader2, Dna, Box, Sparkles, FolderOpen, Globe } from 'lucide-react';
+import { ArchiveExplorer } from './components/ArchiveExplorer';
+import { UploadModal } from './components/UploadModal';
+import { AssetDetailModal } from './components/AssetDetailModal';
+import { Loader2, Dna, Box, Sparkles, FolderOpen, Globe, Layers } from 'lucide-react';
 
 export default function App() {
   // Viewer Mode: Three.js for CAD/mesh, Mol* for PDB/mmCIF
@@ -137,7 +144,7 @@ export default function App() {
   const [molecularStats, setMolecularStats] = useState<MolecularStats | null>(null);
   const [molstarSettings, setMolstarSettings] = useState<MolstarSettings>({
     representation: 'cartoon',
-    colorScheme: 'secondary-structure',
+    colorScheme: 'confidence',
     spin: false,
     lighting: 'matte',
     backgroundTheme: 'dark',
@@ -145,6 +152,8 @@ export default function App() {
     expandedControls: false,
   });
   const [focusChainId, setFocusChainId] = useState<string | null>(null);
+  const [focusedLigand, setFocusedLigand] = useState<MolecularLigandInfo | null>(null);
+  const [hoveredLigand, setHoveredLigand] = useState<MolecularLigandInfo | null>(null);
   const rawMolecularBlobRef = useRef<{ blob: Blob; fileName: string } | null>(null);
 
   // Panels visibility
@@ -156,7 +165,13 @@ export default function App() {
   const [isOpenSnapshotModal, setIsOpenSnapshotModal] = useState<boolean>(false);
   const [isOpenShareModal, setIsOpenShareModal] = useState<boolean>(false);
   const [isOpenAboutModal, setIsOpenAboutModal] = useState<boolean>(false);
+  const [isOpenArchiveExplorer, setIsOpenArchiveExplorer] = useState<boolean>(false);
+  const [isOpenUploadModal, setIsOpenUploadModal] = useState<boolean>(false);
+  const [selectedArchiveItem, setSelectedArchiveItem] = useState<ArchiveItem | null>(null);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // IndexedDB Vault Storage State
+  const [vaultItems, setVaultItems] = useState<ArchiveItem[]>([]);
 
   // Viewport action refs
   const cameraFitRef = useRef<(() => void) | null>(null);
@@ -166,9 +181,13 @@ export default function App() {
     ((options: { width: number; height: number; transparent: boolean; format: string }) => Promise<Blob>) | null
   >(null);
 
-  // Load default sample on initial mount
+  // Load default sample and initialize IndexedDB on initial mount
   useEffect(() => {
     loadMolecularPdbId('4HHB');
+    // Hydrate vault from IndexedDB
+    initVaultStorage()
+      .then((items) => setVaultItems(items))
+      .catch((err) => console.warn('Could not hydrate vault from IndexedDB:', err));
   }, []);
 
   // --- Molecular Loading Functions ---
@@ -323,11 +342,80 @@ export default function App() {
       return ['pdb', 'ent', 'cif', 'mmcif', 'bcif'].includes(ext || '');
     });
 
+    // Auto-persist binary asset to IndexedDB
+    try {
+      const firstFile = fileArray[0];
+      const ext = firstFile.name.split('.').pop()?.toLowerCase() || '';
+      const isMol = ['pdb', 'ent', 'cif', 'mmcif', 'bcif'].includes(ext);
+      const is3D = ['gltf', 'glb', 'obj', 'stl', 'ply'].includes(ext);
+      if (isMol || is3D) {
+        const vaultAsset: ArchiveItem = {
+          id: `vault-upload-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          name: firstFile.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+          description: `User-imported ${ext.toUpperCase()} asset persisted in IndexedDB storage.`,
+          category: isMol ? 'molecular' : '3d-model',
+          format: ext,
+          size: firstFile.size,
+          tier: 'standard',
+          tags: [ext, isMol ? 'molecular' : '3d-model', 'imported'],
+          dateAdded: new Date().toISOString(),
+          author: 'User Session',
+          license: 'Local / Vault Asset',
+          version: '1.0.0',
+          compatibility: isMol ? ['Mol* Viewer', 'PyMOL'] : ['Blender 4.2', 'Three.js r160'],
+          blob: firstFile,
+          fileUrl: URL.createObjectURL(firstFile),
+        };
+        saveAsset(vaultAsset).then(() => {
+          setVaultItems((prev) => [vaultAsset, ...prev.filter((p) => p.id !== vaultAsset.id)]);
+        });
+      }
+    } catch (err) {
+      console.warn('Could not auto-persist file to IndexedDB:', err);
+    }
+
     if (molecularFile) {
       loadMolecularFile(molecularFile);
     } else {
       loadThreeModelFromFiles(files);
     }
+  };
+
+  // Load asset directly from KEEPER Vault
+  const handleLoadArchiveItem = (item: ArchiveItem) => {
+    if (item.sampleType && item.sampleType !== 'pdb') {
+      loadSample3D(item.sampleType);
+    } else if (item.pdbId) {
+      loadMolecularPdbId(item.pdbId);
+    } else if (item.category === 'molecular' || ['pdb', 'cif', 'mmcif'].includes(item.format)) {
+      if (item.blob) {
+        const file = new File([item.blob], `${item.name}.${item.format}`);
+        loadMolecularFile(file);
+      }
+    } else if (item.category === '3d-model' || ['glb', 'gltf', 'obj', 'stl', 'ply'].includes(item.format)) {
+      if (item.blob) {
+        const file = new File([item.blob], `${item.name}.${item.format}`);
+        loadThreeModelFromFiles([file]);
+      }
+    } else {
+      // Script or Shader: Open detail modal directly in Script Source view
+      setSelectedArchiveItem(item);
+    }
+  };
+
+  const handleAssetSaved = (asset: ArchiveItem) => {
+    setVaultItems((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
+    handleLoadArchiveItem(asset);
+  };
+
+  const handleDeleteAsset = async (id: string) => {
+    await deleteAsset(id);
+    setVaultItems((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const handleUpdateAsset = async (updated: ArchiveItem) => {
+    await saveAsset(updated);
+    setVaultItems((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
   };
 
   // Drag and Drop listeners
@@ -437,6 +525,41 @@ export default function App() {
     }
   };
 
+  // Ligand visibility toggle handler
+  const handleToggleLigandVisibility = (ligandId: string, visible: boolean) => {
+    setMolecularStats((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        ligands: prev.ligands.map((l) => (l.id === ligandId ? { ...l, visible } : l)),
+      };
+    });
+  };
+
+  // Toggle all ligands visibility
+  const handleToggleAllLigandsVisibility = (visible: boolean) => {
+    setMolecularStats((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        ligands: prev.ligands.map((l) => ({ ...l, visible })),
+      };
+    });
+  };
+
+  // Focus on specific ligand
+  const handleFocusLigand = (ligand: MolecularLigandInfo) => {
+    setFocusedLigand(ligand);
+    setTimeout(() => {
+      setFocusedLigand(null);
+    }, 400);
+  };
+
+  // Hover over ligand
+  const handleHoverLigand = (ligand: MolecularLigandInfo | null) => {
+    setHoveredLigand(ligand);
+  };
+
   return (
     <div
       id="app-root-container"
@@ -476,6 +599,8 @@ export default function App() {
         onOpenAboutClick={() => setIsOpenAboutModal(true)}
         onLoadSamplePdb={loadMolecularPdbId}
         onLoadSample3D={loadSample3D}
+        onOpenArchiveExplorer={() => setIsOpenArchiveExplorer(true)}
+        onOpenUploadModal={() => setIsOpenUploadModal(true)}
       />
 
       {/* Main Workspace (Viewport + Overlays + Sidebars) */}
@@ -502,6 +627,10 @@ export default function App() {
           }}
           onFocusNode={handleFocusNode}
           onFocusMolecularChain={(chainId) => setFocusChainId(chainId)}
+          onToggleLigandVisibility={handleToggleLigandVisibility}
+          onToggleAllLigandsVisibility={handleToggleAllLigandsVisibility}
+          onFocusLigand={handleFocusLigand}
+          onHoverLigand={handleHoverLigand}
           onUpdateMaterialColor={handleUpdateMaterialColor}
           isOpen={isLeftPanelOpen}
           onToggleOpen={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
@@ -514,6 +643,7 @@ export default function App() {
               source={molecularSource}
               settings={molstarSettings}
               stats={molecularStats}
+              onChangeSettings={(upd) => setMolstarSettings((prev) => ({ ...prev, ...upd }))}
               onSetCameraFitRef={(fn) => {
                 cameraFitRef.current = fn;
               }}
@@ -521,6 +651,9 @@ export default function App() {
                 canvasBlobGetterRef.current = async () => fn();
               }}
               focusChainId={focusChainId}
+              ligands={molecularStats?.ligands}
+              focusedLigand={focusedLigand}
+              hoveredLigand={hoveredLigand}
             />
           ) : (
             <Viewport3D
@@ -624,6 +757,13 @@ export default function App() {
               onToggleWireframe={() =>
                 setRenderSettings((prev) => ({ ...prev, showWireframe: !prev.showWireframe }))
               }
+              showBoundingBox={renderSettings.showBoundingBox}
+              onToggleBoundingBox={() =>
+                setRenderSettings((prev) => ({
+                  ...prev,
+                  showBoundingBox: !prev.showBoundingBox,
+                }))
+              }
               showGrid={renderSettings.showGrid}
               onToggleGrid={() =>
                 setRenderSettings((prev) => ({ ...prev, showGrid: !prev.showGrid }))
@@ -634,6 +774,11 @@ export default function App() {
               }
               shading={renderSettings.shading}
               onChangeShading={(shading) => setRenderSettings((prev) => ({ ...prev, shading }))}
+              lightingPreset={renderSettings.lightPreset}
+              onChangeLightingPreset={(preset) =>
+                setRenderSettings((prev) => ({ ...prev, lightPreset: preset }))
+              }
+              onTakeSnapshot={() => setIsOpenSnapshotModal(true)}
             />
           )}
 
@@ -775,6 +920,37 @@ export default function App() {
       <AboutModal
         isOpen={isOpenAboutModal}
         onClose={() => setIsOpenAboutModal(false)}
+      />
+
+      {/* KEEPER Vault Explorer Modal */}
+      <ArchiveExplorer
+        isOpen={isOpenArchiveExplorer}
+        onClose={() => setIsOpenArchiveExplorer(false)}
+        items={vaultItems}
+        onLoadAsset={handleLoadArchiveItem}
+        onInspectAsset={(item) => setSelectedArchiveItem(item)}
+        onOpenUpload={() => {
+          setIsOpenArchiveExplorer(false);
+          setIsOpenUploadModal(true);
+        }}
+        onDeleteAsset={handleDeleteAsset}
+      />
+
+      {/* Upload / Ingestion Modal */}
+      <UploadModal
+        isOpen={isOpenUploadModal}
+        onClose={() => setIsOpenUploadModal(false)}
+        onAssetSaved={handleAssetSaved}
+      />
+
+      {/* Asset Detail & AI Inspection Modal */}
+      <AssetDetailModal
+        item={selectedArchiveItem}
+        isOpen={selectedArchiveItem !== null}
+        onClose={() => setSelectedArchiveItem(null)}
+        onLoadAsset={handleLoadArchiveItem}
+        onUpdateAsset={handleUpdateAsset}
+        onDeleteAsset={handleDeleteAsset}
       />
     </div>
   );

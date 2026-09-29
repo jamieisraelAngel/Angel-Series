@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Sparkles,
   Share2,
+  Layers,
+  UploadCloud,
 } from 'lucide-react';
 import { ModelStats, MolecularStats, ViewerMode } from '../types';
 import { SAMPLE_PDB_STRUCTURES } from '../utils/molecularHelpers';
@@ -32,6 +34,8 @@ interface HeaderProps {
   onOpenAboutClick: () => void;
   onLoadSamplePdb: (pdbId: string) => void;
   onLoadSample3D: (type: 'torus' | 'gear' | 'crystal') => void;
+  onOpenArchiveExplorer?: () => void;
+  onOpenUploadModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -50,6 +54,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAboutClick,
   onLoadSamplePdb,
   onLoadSample3D,
+  onOpenArchiveExplorer,
+  onOpenUploadModal,
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showSamplesMenu, setShowSamplesMenu] = useState(false);
@@ -101,6 +107,33 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Main Actions */}
       <div className="flex items-center gap-1.5">
+        {/* KEEPER Vault Explorer */}
+        {onOpenArchiveExplorer && (
+          <button
+            id="header-btn-vault-explorer"
+            onClick={onOpenArchiveExplorer}
+            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:to-purple-600/30 text-amber-300 border border-amber-500/30 text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 active:scale-95"
+            title="Open KEEPER 3D & Script Vault Explorer"
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span>Vault</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          </button>
+        )}
+
+        {/* Ingest / Upload to Vault */}
+        {onOpenUploadModal && (
+          <button
+            id="header-btn-ingest-asset"
+            onClick={onOpenUploadModal}
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-colors flex items-center gap-1.5"
+            title="Upload and persist 3D mesh or script with AI autofill"
+          >
+            <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Ingest</span>
+          </button>
+        )}
+
         {/* Open Local File */}
         <button
           id="header-btn-open-file"
