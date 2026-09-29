@@ -524,29 +524,27 @@ export function formatRelativeTime(isoString?: string): string {
 }
 
 /**
- * Initializes the vault database with defaults and merges any new seed items.
+ * Initializes the vault database and retains only user-uploaded models henceforth.
  */
 export async function initVaultStorage(): Promise<ArchiveItem[]> {
   try {
     const existing = await getAllAssets();
-    const existingIds = new Set(existing.map((i) => i.id));
-    const deletedIds = getDeletedIds();
-    let addedSeed = false;
+    const seedIds = new Set(DEFAULT_VAULT_ITEMS.map((i) => i.id));
+    const uploadedOnly: ArchiveItem[] = [];
 
-    for (const item of DEFAULT_VAULT_ITEMS) {
-      if (!existingIds.has(item.id) && !deletedIds.has(item.id)) {
-        await saveAsset(item);
-        addedSeed = true;
+    for (const item of existing) {
+      const isSeedWithoutBlob =
+        (seedIds.has(item.id) || item.id.startsWith('vault-mol-')) && !item.blob;
+      if (isSeedWithoutBlob) {
+        await deleteAsset(item.id).catch(() => {});
+      } else {
+        uploadedOnly.push(item);
       }
     }
 
-    if (addedSeed || existing.length === 0) {
-      return await getAllAssets();
-    }
-    return existing;
+    return uploadedOnly;
   } catch (err) {
     console.warn('Could not initialize vault storage:', err);
-    const deletedIds = getDeletedIds();
-    return DEFAULT_VAULT_ITEMS.filter((item) => !deletedIds.has(item.id));
+    return [];
   }
 }

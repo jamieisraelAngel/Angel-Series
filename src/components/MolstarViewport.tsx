@@ -40,6 +40,17 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isScriptReady, setIsScriptReady] = useState<boolean>(false);
   const activeBlobUrlRef = useRef<string | null>(null);
+  const onSetCameraFitRefProp = useRef(onSetCameraFitRef);
+  const onGetCanvasBlobRefProp = useRef(onGetCanvasBlobRef);
+  const statsRef = useRef(stats);
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    onSetCameraFitRefProp.current = onSetCameraFitRef;
+    onGetCanvasBlobRefProp.current = onGetCanvasBlobRef;
+    statsRef.current = stats;
+    settingsRef.current = settings;
+  }, [onSetCameraFitRef, onGetCanvasBlobRef, stats, settings]);
 
   // Helper to safely check if Mol* plugin hierarchy is ready for visual operations
   const isMolstarReady = useCallback((viewer: any): boolean => {
@@ -151,11 +162,12 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
   // Build contiguous residue color spans from stats.residueConfidences for fast Mol* selection coloring
   const buildResidueColorSelections = useCallback(
     (scheme: MolecularColorScheme) => {
-      const residues = stats?.residueConfidences || [];
+      const curStats = statsRef.current;
+      const residues = curStats?.residueConfidences || [];
       if (residues.length === 0) return [];
 
-      const minB = stats?.minBFactor ?? 5;
-      const maxB = stats?.maxBFactor ?? 60;
+      const minB = curStats?.minBFactor ?? 5;
+      const maxB = curStats?.maxBFactor ?? 60;
 
       // Group contiguous residues with identical RGB color on the same chain
       const spans: Array<{
@@ -212,7 +224,7 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
 
       return selectionData;
     },
-    [stats]
+    []
   );
 
   // Apply color scheme to loaded Mol* structure
@@ -221,9 +233,10 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
       if (!isMolstarReady(viewer)) return;
 
       try {
+        const curStats = statsRef.current;
         // 1. First attempt native Mol* representation color theme update
         const themeMap: Record<MolecularColorScheme, string> = {
-          'confidence': stats?.isPredictedModel ? 'plddt-confidence' : 'uncertainty',
+          'confidence': curStats?.isPredictedModel ? 'plddt-confidence' : 'uncertainty',
           'b-factor': 'uncertainty',
           'secondary-structure': 'secondary-structure-type',
           'chain-id': 'chain-id',
@@ -260,7 +273,7 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
         console.warn('Could not apply Mol* color scheme:', err);
       }
     },
-    [isMolstarReady, stats, buildResidueColorSelections]
+    [isMolstarReady, buildResidueColorSelections]
   );
 
   // Initialize and load structure in Mol*
@@ -270,15 +283,32 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
     setIsLoading(true);
     setIsStructureLoaded(false);
     setLoadError(null);
-    pluginInstanceRef.current = null;
 
-    // Clean up previous blob URL
+    if (pluginInstanceRef.current) {
+      try {
+        pluginInstanceRef.current.plugin?.dispose?.();
+      } catch {
+        // ignore
+      }
+      pluginInstanceRef.current = null;
+    }
+
+    // Delay revoking previous blob URL so any in-flight Mol* worker never hits a revoked URL
     if (activeBlobUrlRef.current) {
-      URL.revokeObjectURL(activeBlobUrlRef.current);
+      const oldUrl = activeBlobUrlRef.current;
       activeBlobUrlRef.current = null;
+      setTimeout(() => {
+        try {
+          URL.revokeObjectURL(oldUrl);
+        } catch {
+          // ignore
+        }
+      }, 15000);
     }
 
     let readinessPoll: ReturnType<typeof setInterval> | null = null;
+    let loadSub: any = null;
+    let hasMarkedLoaded = false;
 
     try {
       // Clear container DOM
@@ -295,17 +325,19 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
       const PDBeMolstarPlugin = (window as any).PDBeMolstarPlugin;
       const viewerInstance = new PDBeMolstarPlugin();
 
+      const curSettings = settingsRef.current;
+      const curStats = statsRef.current;
       const bgColor = getMolstarBgColor();
 
       // Configure rendering options
       const renderOptions: any = {
         bgColor,
-        hideControls: !settings.expandedControls,
+        hideControls: !curSettings.expandedControls,
         hideCanvasControls: ['snapshotControls', 'snapshotDescription'],
-        visualStyle: getVisualRepresentation(settings.representation),
-        lighting: settings.lighting || 'matte',
-        spin: settings.spin,
-        alphafoldView: settings.colorScheme === 'confidence' && Boolean(stats?.isPredictedModel),
+        visualStyle: getVisualRepresentation(curSettings.representation),
+        lighting: curSettings.lighting || 'matte',
+        spin: curSettings.spin,
+        alphafoldView: curSettings.colorScheme === 'confidence' && Boolean(curStats?.isPredictedModel),
         loadMaps: false,
         expanded: false,
       };
@@ -338,10 +370,21 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
         };
       }
 
-      const markLoaded = () => {
+      const markLoadedOnce = () => {
+        if (hasMarkedLoaded) return;
+        hasMarkedLoaded = true;
+
         if (readinessPoll) {
           clearInterval(readinessPoll);
           readinessPoll = null;
+        }
+        if (loadSub && typeof loadSub.unsubscribe === 'function') {
+          try {
+            loadSub.unsubscribe();
+          } catch {
+            // ignore
+          }
+          loadSub = null;
         }
         pluginInstanceRef.current = viewerInstance;
         setIsStructureLoaded(true);
@@ -350,8 +393,8 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
       };
 
       if (viewerInstance.events?.loadComplete) {
-        viewerInstance.events.loadComplete.subscribe(() => {
-          markLoaded();
+        loadSub = viewerInstance.events.loadComplete.subscribe(() => {
+          markLoadedOnce();
         });
       }
 
@@ -363,7 +406,7 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
       readinessPoll = setInterval(() => {
         attempts++;
         if (isMolstarReady(viewerInstance)) {
-          markLoaded();
+          markLoadedOnce();
         } else if (attempts > 60) {
           // After 12s stop spinner even if hierarchy is empty
           if (readinessPoll) clearInterval(readinessPoll);
@@ -372,8 +415,8 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
       }, 200);
 
       // Register camera fit and screenshot callbacks
-      if (onSetCameraFitRef) {
-        onSetCameraFitRef(() => () => {
+      if (onSetCameraFitRefProp.current) {
+        onSetCameraFitRefProp.current(() => {
           try {
             if (isMolstarReady(viewerInstance)) {
               viewerInstance.visual.reset({ camera: true });
@@ -384,8 +427,8 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
         });
       }
 
-      if (onGetCanvasBlobRef) {
-        onGetCanvasBlobRef(async () => {
+      if (onGetCanvasBlobRefProp.current) {
+        onGetCanvasBlobRefProp.current(async () => {
           const canvas = targetDiv.querySelector('canvas');
           if (!canvas) throw new Error('Mol* Canvas not found');
 
@@ -403,6 +446,13 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
       }
     } catch (err: any) {
       if (readinessPoll) clearInterval(readinessPoll);
+      if (loadSub && typeof loadSub.unsubscribe === 'function') {
+        try {
+          loadSub.unsubscribe();
+        } catch {
+          // ignore
+        }
+      }
       console.error('Mol* rendering error:', err);
       setLoadError(err?.message || 'Failed to render molecular structure.');
       setIsLoading(false);
@@ -413,12 +463,8 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
     settings.representation,
     settings.lighting,
     settings.expandedControls,
-    settings.spin,
-    getMolstarBgColor,
     getVisualRepresentation,
     isMolstarReady,
-    onSetCameraFitRef,
-    onGetCanvasBlobRef,
   ]);
 
   // Trigger render on source or core representation changes
@@ -426,22 +472,39 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
     if (isScriptReady && source) {
       renderMolstar();
     }
-
-    return () => {
-      if (activeBlobUrlRef.current) {
-        URL.revokeObjectURL(activeBlobUrlRef.current);
-      }
-    };
   }, [isScriptReady, source, renderMolstar]);
 
-  // Apply color scheme whenever structure finishes loading, stats update, or colorScheme changes
+  // Update background color in-place without re-mounting Mol*
+  useEffect(() => {
+    if (!isStructureLoaded || !pluginInstanceRef.current) return;
+    const viewer = pluginInstanceRef.current;
+    try {
+      const bgColor = getMolstarBgColor();
+      viewer.canvas?.setBgColor?.(bgColor);
+    } catch {
+      // ignore
+    }
+  }, [isStructureLoaded, getMolstarBgColor]);
+
+  // Update spin state in-place without re-mounting Mol*
+  useEffect(() => {
+    if (!isStructureLoaded || !pluginInstanceRef.current) return;
+    const viewer = pluginInstanceRef.current;
+    try {
+      viewer.visual?.toggleSpin?.(settings.spin);
+    } catch {
+      // ignore
+    }
+  }, [isStructureLoaded, settings.spin]);
+
+  // Apply color scheme whenever structure finishes loading or colorScheme changes
   useEffect(() => {
     if (!isStructureLoaded || !pluginInstanceRef.current) return;
     const viewer = pluginInstanceRef.current;
     if (!isMolstarReady(viewer)) return;
 
     applyColorSchemeToViewer(viewer, settings.colorScheme);
-  }, [isStructureLoaded, loadVersion, settings.colorScheme, stats, applyColorSchemeToViewer, isMolstarReady]);
+  }, [isStructureLoaded, loadVersion, settings.colorScheme, applyColorSchemeToViewer, isMolstarReady]);
 
   // Handle focus on specific chain
   useEffect(() => {

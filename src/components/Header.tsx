@@ -14,6 +14,8 @@ import {
   Share2,
   Layers,
   UploadCloud,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { ModelStats, MolecularStats, ViewerMode } from '../types';
 import { SAMPLE_PDB_STRUCTURES } from '../utils/molecularHelpers';
@@ -36,6 +38,10 @@ interface HeaderProps {
   onLoadSample3D: (type: 'torus' | 'gear' | 'crystal') => void;
   onOpenArchiveExplorer?: () => void;
   onOpenUploadModal?: () => void;
+  activePage?: 'workspace' | 'vault';
+  onChangePage?: (page: 'workspace' | 'vault') => void;
+  appTheme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -56,6 +62,10 @@ export const Header: React.FC<HeaderProps> = ({
   onLoadSample3D,
   onOpenArchiveExplorer,
   onOpenUploadModal,
+  activePage = 'workspace',
+  onChangePage,
+  appTheme = 'dark',
+  onToggleTheme,
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showSamplesMenu, setShowSamplesMenu] = useState(false);
@@ -72,7 +82,11 @@ export const Header: React.FC<HeaderProps> = ({
     >
       {/* Brand & Active Model Info */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+        <div
+          onClick={() => onChangePage?.('workspace')}
+          className="flex items-center gap-2 cursor-pointer"
+          title="Return to 3D / Mol* Workspace"
+        >
           <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-600/30">
             {viewerMode === 'molstar' ? (
               <Dna className="w-4 h-4 text-white" />
@@ -84,7 +98,11 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-bold text-sm tracking-tight text-white">El-Roi</span>
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                {viewerMode === 'molstar' ? 'Mol* Molecular' : 'Three.js 3D'}
+                {activePage === 'vault'
+                  ? 'Vault Page'
+                  : viewerMode === 'molstar'
+                  ? 'Mol* Molecular'
+                  : 'Three.js 3D'}
               </span>
             </div>
           </div>
@@ -107,19 +125,31 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Main Actions */}
       <div className="flex items-center gap-1.5">
-        {/* KEEPER Vault Explorer */}
-        {onOpenArchiveExplorer && (
-          <button
-            id="header-btn-vault-explorer"
-            onClick={onOpenArchiveExplorer}
-            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:to-purple-600/30 text-amber-300 border border-amber-500/30 text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 active:scale-95"
-            title="Open KEEPER 3D & Script Vault Explorer"
-          >
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span>Vault</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-          </button>
-        )}
+        {/* KEEPER Vault Dedicated Page Toggle */}
+        <button
+          id="header-btn-vault-explorer"
+          onClick={() => {
+            if (onChangePage) {
+              onChangePage(activePage === 'vault' ? 'workspace' : 'vault');
+            } else if (onOpenArchiveExplorer) {
+              onOpenArchiveExplorer();
+            }
+          }}
+          className={`px-3 py-1.5 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5 active:scale-95 border ${
+            activePage === 'vault'
+              ? 'bg-amber-500 text-slate-950 border-amber-400'
+              : 'bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:to-purple-600/30 text-amber-300 border-amber-500/30'
+          }`}
+          title="Open Uploaded Models Vault Page"
+        >
+          <Layers className={`w-3.5 h-3.5 ${activePage === 'vault' ? 'text-slate-950' : 'text-amber-400'}`} />
+          <span>Vault</span>
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              activePage === 'vault' ? 'bg-slate-950' : 'bg-amber-400 animate-pulse'
+            }`}
+          />
+        </button>
 
         {/* Ingest / Upload to Vault */}
         {onOpenUploadModal && (
@@ -320,6 +350,28 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
         </div>
+
+        {/* Light / Dark Mode Toggle */}
+        {onToggleTheme && (
+          <button
+            id="header-btn-theme-toggle"
+            onClick={onToggleTheme}
+            title={appTheme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex items-center gap-1.5 text-xs font-medium"
+          >
+            {appTheme === 'light' ? (
+              <>
+                <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="hidden lg:inline">Dark</span>
+              </>
+            ) : (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden lg:inline">Light</span>
+              </>
+            )}
+          </button>
+        )}
 
         {/* Share Link */}
         <button

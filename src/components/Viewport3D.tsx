@@ -175,9 +175,9 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
   // Expose camera controls to parent
   useEffect(() => {
-    onSetCameraFitRef?.(() => fitCameraToModel);
-    onSetResetCameraRef?.(() => resetCamera);
-    onSetViewPresetRef?.(() => setViewPreset);
+    onSetCameraFitRef?.(fitCameraToModel);
+    onSetResetCameraRef?.(resetCamera);
+    onSetViewPresetRef?.(setViewPreset);
   }, [onSetCameraFitRef, onSetResetCameraRef, onSetViewPresetRef, fitCameraToModel, resetCamera, setViewPreset]);
 
   // High-Resolution Snapshot Generator

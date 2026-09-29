@@ -58,9 +58,20 @@ import { DropZoneOverlay } from './components/DropZoneOverlay';
 import { ArchiveExplorer } from './components/ArchiveExplorer';
 import { UploadModal } from './components/UploadModal';
 import { AssetDetailModal } from './components/AssetDetailModal';
+import { VaultPage } from './components/VaultPage';
 import { Loader2, Dna, Box, Sparkles, FolderOpen, Globe, Layers } from 'lucide-react';
 
 export default function App() {
+  // Active Top-Level Page: 3D/Mol* Workspace vs Uploaded Models Vault Page
+  const [activePage, setActivePage] = useState<'workspace' | 'vault'>('workspace');
+  const [appTheme, setAppTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      return localStorage.getItem('elroi_ui_theme') === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
   // Viewer Mode: Three.js for CAD/mesh, Mol* for PDB/mmCIF
   const [viewerMode, setViewerMode] = useState<ViewerMode>('molstar');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -136,10 +147,7 @@ export default function App() {
     type: 'file' | 'url' | 'pdbId';
     data: File | string;
     format?: 'pdb' | 'cif' | 'bcif';
-  } | null>({
-    type: 'pdbId',
-    data: '4hhb',
-  });
+  } | null>(null);
 
   const [molecularStats, setMolecularStats] = useState<MolecularStats | null>(null);
   const [molstarSettings, setMolstarSettings] = useState<MolstarSettings>({
@@ -181,6 +189,61 @@ export default function App() {
     ((options: { width: number; height: number; transparent: boolean; format: string }) => Promise<Blob>) | null
   >(null);
 
+  const handleSetCameraFitRef = useCallback((fn: () => void) => {
+    cameraFitRef.current = fn;
+  }, []);
+
+  const handleSetResetCameraRef = useCallback((fn: () => void) => {
+    resetCameraRef.current = fn;
+  }, []);
+
+  const handleSetViewPresetRef = useCallback((fn: (preset: ViewPreset) => void) => {
+    viewPresetRef.current = fn;
+  }, []);
+
+  const handleGetMolstarCanvasBlobRef = useCallback((fn: () => Promise<Blob>) => {
+    canvasBlobGetterRef.current = async () => fn();
+  }, []);
+
+  const handleGetThreeCanvasBlobRef = useCallback(
+    (fn: (options: { width: number; height: number; transparent: boolean; format: string }) => Promise<Blob>) => {
+      canvasBlobGetterRef.current = fn;
+    },
+    []
+  );
+
+  const handleAnimationProgress = useCallback((t: number, d: number) => {
+    setAnimTime(t);
+    setAnimDuration(d);
+  }, []);
+
+  // Sync light/dark theme class on document root and 3D/Mol* canvas background
+  useEffect(() => {
+    const root = document.documentElement;
+    if (appTheme === 'light') {
+      root.classList.add('theme-light');
+    } else {
+      root.classList.remove('theme-light');
+    }
+    try {
+      localStorage.setItem('elroi_ui_theme', appTheme);
+    } catch {
+      // ignore storage errors
+    }
+    setRenderSettings((prev) => ({
+      ...prev,
+      backgroundTheme: appTheme === 'light' ? 'light' : 'dark',
+    }));
+    setMolstarSettings((prev) => ({
+      ...prev,
+      backgroundTheme: appTheme === 'light' ? 'light' : 'dark',
+    }));
+  }, [appTheme]);
+
+  const handleToggleTheme = () => {
+    setAppTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   // Load default sample and initialize IndexedDB on initial mount
   useEffect(() => {
     loadMolecularPdbId('4HHB');
@@ -198,55 +261,56 @@ export default function App() {
 
     try {
       const id = pdbId.trim().toUpperCase();
-      // Fetch text to parse metadata for researchers
+      // Fetch text from RCSB (CORS-enabled) so we can both parse metadata and pass a local File blob to Mol*
       const res = await fetch(`https://files.rcsb.org/download/${id}.pdb`);
-      if (!res.ok) {
-        throw new Error(`Failed to download PDB entry ${id}. Status: ${res.statusText}`);
-      }
-      const text = await res.text();
-      const stats = parsePdbMetadata(text, `${id}.pdb`);
+      if (res.ok) {
+        const text = await res.text();
+        const fileName = `${id}.pdb`;
+        const pdbFile = new File([text], fileName, { type: 'text/plain' });
+        const stats = parsePdbMetadata(text, fileName, pdbFile.size);
 
-      setMolecularStats(stats);
-      setModelName(`${id} - ${stats.title}`);
-      setMolecularSource({
-        type: 'pdbId',
-        data: id.toLowerCase(),
-      });
-      rawMolecularBlobRef.current = {
-        blob: new Blob([text], { type: 'text/plain' }),
-        fileName: `${id}.pdb`,
-      };
-      setViewerMode('molstar');
-
-      // Ensure fetched PDB structure is catalogued in the Vault
-      setVaultItems((prev) => {
-        const exists = prev.some(
-          (item) => item.pdbId?.toUpperCase() === id || item.id === `vault-mol-${id.toLowerCase()}`
-        );
-        if (exists) return prev;
-        const newMolAsset: ArchiveItem = {
-          id: `vault-mol-${id.toLowerCase()}`,
-          name: `${stats.title} (${id})`,
-          description: `${stats.classification || 'Macromolecule'} resolved via ${stats.experimentalMethod || 'RCSB PDB'}${stats.resolution ? ` at ${stats.resolution} Å` : ''}.`,
-          category: 'molecular',
+        setMolecularStats(stats);
+        setModelName(`${id} - ${stats.title}`);
+        setMolecularSource({
+          type: 'file',
+          data: pdbFile,
           format: 'pdb',
-          size: text.length,
-          tier: 'rare',
-          tags: ['pdb', id.toLowerCase(), 'molecular', (stats.classification || 'protein').toLowerCase()],
-          dateAdded: new Date().toISOString(),
-          author: stats.organism || 'RCSB PDB',
-          license: 'RCSB Open Data',
-          version: stats.resolution ? `${stats.resolution}Å` : '1.0',
-          compatibility: ['Mol* Viewer', 'PyMOL 3.0'],
-          pdbId: id,
-          stats,
+        });
+        rawMolecularBlobRef.current = {
+          blob: pdbFile,
+          fileName,
         };
-        saveAsset(newMolAsset).catch(() => {});
-        return [newMolAsset, ...prev];
-      });
+        setViewerMode('molstar');
+        return;
+      }
+
+      // Fallback to mmCIF from RCSB if .pdb is unavailable (e.g. large structures)
+      const cifRes = await fetch(`https://files.rcsb.org/download/${id}.cif`);
+      if (cifRes.ok) {
+        const text = await cifRes.text();
+        const fileName = `${id}.cif`;
+        const cifFile = new File([text], fileName, { type: 'text/plain' });
+        const stats = parseCifMetadata(text, fileName, cifFile.size);
+
+        setMolecularStats(stats);
+        setModelName(`${id} - ${stats.title}`);
+        setMolecularSource({
+          type: 'file',
+          data: cifFile,
+          format: 'cif',
+        });
+        rawMolecularBlobRef.current = {
+          blob: cifFile,
+          fileName,
+        };
+        setViewerMode('molstar');
+        return;
+      }
+
+      throw new Error(`Failed to download PDB entry ${id}.`);
     } catch (err: any) {
       console.error('Error fetching PDB:', err);
-      // Fallback: still pass pdbId to Mol* directly
+      // Fallback: pass pdbId to Mol* directly
       setMolecularSource({
         type: 'pdbId',
         data: pdbId.toLowerCase(),
@@ -593,7 +657,9 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="relative w-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans select-none"
+      className={`relative w-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans select-none ${
+        appTheme === 'light' ? 'theme-light' : ''
+      }`}
     >
       {/* Hidden File Input */}
       <input
@@ -624,13 +690,38 @@ export default function App() {
         onToggleFullscreen={toggleFullscreen}
         isFullscreen={isFullscreen}
         onOpenAboutClick={() => setIsOpenAboutModal(true)}
-        onLoadSamplePdb={loadMolecularPdbId}
-        onLoadSample3D={loadSample3D}
-        onOpenArchiveExplorer={() => setIsOpenArchiveExplorer(true)}
+        onLoadSamplePdb={(id) => {
+          setActivePage('workspace');
+          loadMolecularPdbId(id);
+        }}
+        onLoadSample3D={(type) => {
+          setActivePage('workspace');
+          loadSample3D(type);
+        }}
+        onOpenArchiveExplorer={() => setActivePage('vault')}
         onOpenUploadModal={() => setIsOpenUploadModal(true)}
+        activePage={activePage}
+        onChangePage={setActivePage}
+        appTheme={appTheme}
+        onToggleTheme={handleToggleTheme}
       />
 
-      {/* Main Workspace (Viewport + Overlays + Sidebars) */}
+      {/* Dedicated Vault Page vs Main 3D/Mol* Workspace */}
+      {activePage === 'vault' ? (
+        <VaultPage
+          items={vaultItems}
+          activeModelName={modelName}
+          onBackToViewer={() => setActivePage('workspace')}
+          onLoadAsset={(item) => {
+            handleLoadArchiveItem(item);
+            setActivePage('workspace');
+          }}
+          onInspectAsset={(item) => setSelectedArchiveItem(item)}
+          onOpenUploadModal={() => setIsOpenUploadModal(true)}
+          onQuickUploadFiles={(files) => handleIncomingFiles(files)}
+          onDeleteAsset={handleDeleteAsset}
+        />
+      ) : (
       <main className="relative flex-1 w-full h-[calc(100vh-3.5rem)] overflow-hidden">
         {/* Left Hierarchy / Chains Panel */}
         <ModelTreePanel
@@ -664,7 +755,7 @@ export default function App() {
           onLoadVaultItem={handleLoadArchiveItem}
           onInspectVaultItem={(item) => setSelectedArchiveItem(item)}
           onDeleteVaultItem={handleDeleteAsset}
-          onOpenArchiveExplorer={() => setIsOpenArchiveExplorer(true)}
+          onOpenArchiveExplorer={() => setActivePage('vault')}
           onOpenUploadModal={() => setIsOpenUploadModal(true)}
           isOpen={isLeftPanelOpen}
           onToggleOpen={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
@@ -678,12 +769,8 @@ export default function App() {
               settings={molstarSettings}
               stats={molecularStats}
               onChangeSettings={(upd) => setMolstarSettings((prev) => ({ ...prev, ...upd }))}
-              onSetCameraFitRef={(fn) => {
-                cameraFitRef.current = fn;
-              }}
-              onGetCanvasBlobRef={(fn) => {
-                canvasBlobGetterRef.current = async () => fn();
-              }}
+              onSetCameraFitRef={handleSetCameraFitRef}
+              onGetCanvasBlobRef={handleGetMolstarCanvasBlobRef}
               focusChainId={focusChainId}
               ligands={molecularStats?.ligands}
               focusedLigand={focusedLigand}
@@ -697,26 +784,15 @@ export default function App() {
               measureState={measureState}
               projection={projection}
               onUpdateMeasure={(upd) => setMeasureState((prev) => ({ ...prev, ...upd }))}
-              onSetCameraFitRef={(fn) => {
-                cameraFitRef.current = fn;
-              }}
-              onSetResetCameraRef={(fn) => {
-                resetCameraRef.current = fn;
-              }}
-              onSetViewPresetRef={(fn) => {
-                viewPresetRef.current = fn;
-              }}
-              onGetCanvasBlobRef={(fn) => {
-                canvasBlobGetterRef.current = fn;
-              }}
+              onSetCameraFitRef={handleSetCameraFitRef}
+              onSetResetCameraRef={handleSetResetCameraRef}
+              onSetViewPresetRef={handleSetViewPresetRef}
+              onGetCanvasBlobRef={handleGetThreeCanvasBlobRef}
               animations={animations}
               currentAnimationIndex={currentAnimIndex}
               isPlayingAnimation={isPlayingAnim}
               animationSpeed={animSpeed}
-              onAnimationProgress={(t, d) => {
-                setAnimTime(t);
-                setAnimDuration(d);
-              }}
+              onAnimationProgress={handleAnimationProgress}
               seekAnimationTime={seekTime}
             />
           )}
@@ -863,6 +939,7 @@ export default function App() {
           onToggleOpen={() => setIsRightPanelOpen(!isRightPanelOpen)}
         />
       </main>
+      )}
 
       {/* Loading Modal / Notification */}
       {isLoading && (
