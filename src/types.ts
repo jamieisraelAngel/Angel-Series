@@ -135,6 +135,15 @@ export interface MolecularChainInfo {
   type: 'protein' | 'nucleic' | 'other';
 }
 
+export interface ChainHighlightConfig {
+  chainId: string | null;
+  color: string; // Hex color for glow / halo ring
+  mode: 'glow-halo' | 'color-ring' | 'isolate';
+  pulse: boolean;
+  dimOthers: boolean;
+  isolateOnAction?: boolean; // Hide all other chains/structures when clicking highlight or focus
+}
+
 export interface MolecularLigandInfo {
   id: string;
   chemId: string;

@@ -21,11 +21,13 @@ import {
   Sparkles,
   RotateCcw,
   Trash2,
+  CircleDot,
 } from 'lucide-react';
 import {
   AnimationClipInfo,
   ArchiveItem,
   AssetCategory,
+  ChainHighlightConfig,
   MaterialInfo,
   MeshNodeItem,
   MolecularLigandInfo,
@@ -52,6 +54,9 @@ interface ModelTreePanelProps {
   onToggleNodeVisibility: (nodeId: string, visible: boolean) => void;
   onFocusNode: (nodeId: string) => void;
   onFocusMolecularChain?: (chainId: string) => void;
+  chainHighlight?: ChainHighlightConfig;
+  onChangeChainHighlight?: (updated: Partial<ChainHighlightConfig>) => void;
+  onHoverMolecularChain?: (chainId: string | null) => void;
   onToggleLigandVisibility?: (ligandId: string, visible: boolean) => void;
   onToggleAllLigandsVisibility?: (visible: boolean) => void;
   onFocusLigand?: (ligand: MolecularLigandInfo) => void;
@@ -86,6 +91,9 @@ export const ModelTreePanel: React.FC<ModelTreePanelProps> = ({
   onToggleNodeVisibility,
   onFocusNode,
   onFocusMolecularChain,
+  chainHighlight,
+  onChangeChainHighlight,
+  onHoverMolecularChain,
   onToggleLigandVisibility,
   onToggleAllLigandsVisibility,
   onFocusLigand,
@@ -682,37 +690,297 @@ export const ModelTreePanel: React.FC<ModelTreePanelProps> = ({
               ) : (
                 /* Default Chains & Structure Overview Tab */
                 <div className="space-y-4">
-                  {/* Chains Section */}
+                  {/* Chains Section with Glow, Ring & Isolate Chain Toggle */}
                   <div>
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                      <span>Polymer Chains</span>
-                      <span className="text-slate-500 font-mono">
-                        {molecularStats.chains.length} Chains
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <CircleDot
+                          className="w-3.5 h-3.5"
+                          style={{ color: chainHighlight?.color || '#00f0ff' }}
+                        />
+                        <span>Polymer Chains</span>
                       </span>
+
+                      <div className="flex items-center gap-1.5">
+                        {chainHighlight && onChangeChainHighlight && (
+                          <button
+                            id="btn-toggle-isolate-chain"
+                            type="button"
+                            onClick={() => {
+                              const nextIsolate = !chainHighlight.isolateOnAction;
+                              onChangeChainHighlight({
+                                isolateOnAction: nextIsolate,
+                                mode: nextIsolate ? 'isolate' : 'glow-halo',
+                              });
+                            }}
+                            title="When enabled, clicking Highlight or Focus on a chain isolates it and hides all other structures"
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border flex items-center gap-1 transition-all ${
+                              chainHighlight.isolateOnAction || chainHighlight.mode === 'isolate'
+                                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 shadow-sm'
+                                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {chainHighlight.isolateOnAction || chainHighlight.mode === 'isolate' ? (
+                              <EyeOff className="w-3 h-3 text-amber-400" />
+                            ) : (
+                              <Eye className="w-3 h-3 text-slate-400" />
+                            )}
+                            <span>Isolate Chain</span>
+                          </button>
+                        )}
+                        <span className="text-slate-500 font-mono">
+                          {molecularStats.chains.length}
+                        </span>
+                      </div>
                     </div>
+
+                    {/* Glow & Color Ring Customizer Bar */}
+                    {chainHighlight && onChangeChainHighlight && (
+                      <div className="mb-2.5 p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold text-slate-300">
+                            {chainHighlight.isolateOnAction || chainHighlight.mode === 'isolate'
+                              ? 'Isolate Mode Active (Hides Other Structures)'
+                              : 'Highlight Style & Ring Color'}
+                          </span>
+                          {chainHighlight.chainId && (
+                            <button
+                              type="button"
+                              onClick={() => onChangeChainHighlight({ chainId: null })}
+                              className="text-[10px] font-semibold text-rose-400 hover:text-rose-300"
+                            >
+                              Show All ({chainHighlight.chainId})
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-1">
+                          {(
+                            [
+                              { id: 'glow-halo', label: 'Glow Halo' },
+                              { id: 'color-ring', label: 'Color Ring' },
+                              { id: 'isolate', label: 'Isolate Only' },
+                            ] as const
+                          ).map((modeOpt) => (
+                            <button
+                              key={modeOpt.id}
+                              type="button"
+                              onClick={() =>
+                                onChangeChainHighlight({
+                                  mode: modeOpt.id,
+                                  isolateOnAction: modeOpt.id === 'isolate',
+                                })
+                              }
+                              className={`py-1 rounded-lg text-[10px] font-semibold border transition-colors ${
+                                chainHighlight.mode === modeOpt.id
+                                  ? 'bg-indigo-600/30 border-indigo-500/60 text-white'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {modeOpt.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-0.5">
+                          <div className="flex items-center gap-1.5">
+                            {['#00f0ff', '#10b981', '#f43f5e', '#f59e0b', '#a855f7', '#38bdf8'].map(
+                              (hex) => (
+                                <button
+                                  key={hex}
+                                  type="button"
+                                  onClick={() => onChangeChainHighlight({ color: hex })}
+                                  className={`w-4 h-4 rounded-full transition-transform ${
+                                    chainHighlight.color.toLowerCase() === hex
+                                      ? 'scale-125 ring-2 ring-white'
+                                      : 'opacity-75 hover:opacity-100'
+                                  }`}
+                                  style={{
+                                    backgroundColor: hex,
+                                    boxShadow: `0 0 8px ${hex}88`,
+                                  }}
+                                  title={`Set ring & glow color to ${hex}`}
+                                />
+                              )
+                            )}
+                            <input
+                              type="color"
+                              value={chainHighlight.color}
+                              onChange={(e) => onChangeChainHighlight({ color: e.target.value })}
+                              className="w-4 h-4 rounded cursor-pointer bg-transparent border-0 p-0"
+                              title="Pick custom glow / ring color"
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onChangeChainHighlight({ dimOthers: !chainHighlight.dimOthers })
+                            }
+                            className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                              chainHighlight.dimOthers
+                                ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                                : 'bg-slate-900 border-slate-800 text-slate-400'
+                            }`}
+                            title="Dim non-selected chains to accentuate the highlighted chain glow"
+                          >
+                            Dim Others
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-1.5">
-                      {molecularStats.chains.map((chain) => (
-                        <div
-                          key={chain.id}
-                          onClick={() => onFocusMolecularChain?.(chain.id)}
-                          className="p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 cursor-pointer transition-colors flex items-center justify-between group"
-                        >
-                          <div className="flex items-center gap-2">
-                            <div className="w-5 h-5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center justify-center font-bold text-xs">
-                              {chain.id}
+                      {molecularStats.chains.map((chain) => {
+                        const isGlowing = chainHighlight?.chainId === chain.id;
+                        const isIsolateActive =
+                          Boolean(chainHighlight?.isolateOnAction) ||
+                          chainHighlight?.mode === 'isolate';
+                        const activeColor = chainHighlight?.color || '#00f0ff';
+
+                        return (
+                          <div
+                            key={chain.id}
+                            onMouseEnter={() => onHoverMolecularChain?.(chain.id)}
+                            onMouseLeave={() => onHoverMolecularChain?.(null)}
+                            onClick={() => {
+                              onChangeChainHighlight?.({
+                                chainId: isGlowing ? null : chain.id,
+                              });
+                              if (!isGlowing) {
+                                onFocusMolecularChain?.(chain.id);
+                              }
+                            }}
+                            className={`p-2 rounded-xl border cursor-pointer transition-all flex items-center justify-between group ${
+                              isGlowing
+                                ? 'bg-slate-800/90 text-white'
+                                : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/50'
+                            }`}
+                            style={
+                              isGlowing
+                                ? {
+                                    borderColor: activeColor,
+                                    boxShadow: `0 0 16px ${activeColor}35, inset 0 0 12px ${activeColor}18`,
+                                  }
+                                : undefined
+                            }
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {/* Chain ID Badge with Glowing Color Ring */}
+                              <div
+                                className="w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 transition-all"
+                                style={
+                                  isGlowing
+                                    ? {
+                                        backgroundColor: `${activeColor}28`,
+                                        color: '#ffffff',
+                                        border: `2px solid ${activeColor}`,
+                                        boxShadow: `0 0 10px ${activeColor}`,
+                                      }
+                                    : {
+                                        backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                                        color: '#6ee7b7',
+                                        border: '1px solid rgba(16, 185, 129, 0.35)',
+                                      }
+                                }
+                              >
+                                {chain.id}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold text-slate-200 group-hover:text-white flex items-center gap-1.5 truncate">
+                                  <span className="truncate">{chain.name}</span>
+                                  {isGlowing && (
+                                    <span
+                                      className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded font-bold shrink-0"
+                                      style={{
+                                        backgroundColor: `${activeColor}25`,
+                                        color: activeColor,
+                                      }}
+                                    >
+                                      {isIsolateActive ? 'Isolated' : 'Glowing'}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-400 capitalize">
+                                  {chain.type} • {chain.residueCount} residues
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <div className="text-xs font-semibold text-slate-200 group-hover:text-white">
-                                {chain.name}
-                              </div>
-                              <div className="text-[10px] text-slate-400 capitalize">
-                                {chain.type} • {chain.residueCount} residues
-                              </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const nextChainId = isGlowing ? null : chain.id;
+                                  onChangeChainHighlight?.({
+                                    chainId: nextChainId,
+                                  });
+                                  if (nextChainId && isIsolateActive) {
+                                    onFocusMolecularChain?.(chain.id);
+                                  }
+                                }}
+                                title={
+                                  isGlowing
+                                    ? `Restore all chains / turn off highlight on Chain ${chain.id}`
+                                    : isIsolateActive
+                                    ? `Highlight & isolate Chain ${chain.id} (hiding all other structures)`
+                                    : `Highlight Chain ${chain.id} with color ring`
+                                }
+                                className={`px-2 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1 border transition-all ${
+                                  isGlowing
+                                    ? 'text-white'
+                                    : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:text-white'
+                                }`}
+                                style={
+                                  isGlowing
+                                    ? {
+                                        backgroundColor: `${activeColor}30`,
+                                        borderColor: activeColor,
+                                      }
+                                    : undefined
+                                }
+                              >
+                                <Sparkles className="w-3 h-3" style={{ color: activeColor }} />
+                                <span>
+                                  {isGlowing
+                                    ? isIsolateActive
+                                      ? 'Isolated'
+                                      : 'Ring On'
+                                    : isIsolateActive
+                                    ? 'Isolate'
+                                    : 'Glow'}
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onFocusMolecularChain?.(chain.id);
+                                  if (isIsolateActive) {
+                                    onChangeChainHighlight?.({
+                                      chainId: chain.id,
+                                    });
+                                  }
+                                }}
+                                title={
+                                  isIsolateActive
+                                    ? `Focus & isolate Chain ${chain.id} (hide all other structures)`
+                                    : `Focus camera on Chain ${chain.id}`
+                                }
+                                className={`p-1.5 rounded-lg border transition-colors ${
+                                  isGlowing && isIsolateActive
+                                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                                    : 'bg-slate-900/80 border-transparent hover:bg-slate-700 text-slate-400 hover:text-indigo-400'
+                                }`}
+                              >
+                                <Focus className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
-                          <Focus className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400" />
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 

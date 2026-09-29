@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import {
   AnimationClipInfo,
+  ChainHighlightConfig,
   MaterialInfo,
   MeshNodeItem,
   ModelStats,
@@ -160,6 +161,15 @@ export default function App() {
     expandedControls: false,
   });
   const [focusChainId, setFocusChainId] = useState<string | null>(null);
+  const [chainHighlight, setChainHighlight] = useState<ChainHighlightConfig>({
+    chainId: null,
+    color: '#00f0ff',
+    mode: 'glow-halo',
+    pulse: true,
+    dimOthers: true,
+    isolateOnAction: false,
+  });
+  const [hoveredChainId, setHoveredChainId] = useState<string | null>(null);
   const [focusedLigand, setFocusedLigand] = useState<MolecularLigandInfo | null>(null);
   const [hoveredLigand, setHoveredLigand] = useState<MolecularLigandInfo | null>(null);
   const rawMolecularBlobRef = useRef<{ blob: Blob; fileName: string } | null>(null);
@@ -744,7 +754,13 @@ export default function App() {
             if (obj) obj.visible = vis;
           }}
           onFocusNode={handleFocusNode}
-          onFocusMolecularChain={(chainId) => setFocusChainId(chainId)}
+          onFocusMolecularChain={(chainId) => {
+            setFocusChainId(chainId);
+            setTimeout(() => setFocusChainId(null), 400);
+          }}
+          chainHighlight={chainHighlight}
+          onChangeChainHighlight={(upd) => setChainHighlight((prev) => ({ ...prev, ...upd }))}
+          onHoverMolecularChain={(chainId) => setHoveredChainId(chainId)}
           onToggleLigandVisibility={handleToggleLigandVisibility}
           onToggleAllLigandsVisibility={handleToggleAllLigandsVisibility}
           onFocusLigand={handleFocusLigand}
@@ -772,6 +788,9 @@ export default function App() {
               onSetCameraFitRef={handleSetCameraFitRef}
               onGetCanvasBlobRef={handleGetMolstarCanvasBlobRef}
               focusChainId={focusChainId}
+              chainHighlight={chainHighlight}
+              onChangeChainHighlight={(upd) => setChainHighlight((prev) => ({ ...prev, ...upd }))}
+              hoveredChainId={hoveredChainId}
               ligands={molecularStats?.ligands}
               focusedLigand={focusedLigand}
               hoveredLigand={hoveredLigand}

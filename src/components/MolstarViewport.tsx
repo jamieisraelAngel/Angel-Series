@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { MolstarSettings, MolecularStats, MolecularLigandInfo, MolecularColorScheme } from '../types';
+import {
+  MolstarSettings,
+  MolecularStats,
+  MolecularLigandInfo,
+  MolecularColorScheme,
+  ChainHighlightConfig,
+} from '../types';
 import { getPlddtColor, getBFactorColor } from '../utils/molecularHelpers';
-import { Loader2, RefreshCw, AlertCircle, ShieldCheck, Palette } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, ShieldCheck, Palette, Sparkles, CircleDot, X } from 'lucide-react';
 
 interface MolstarViewportProps {
   source: {
@@ -15,9 +21,35 @@ interface MolstarViewportProps {
   onSetCameraFitRef?: (fn: () => void) => void;
   onGetCanvasBlobRef?: (fn: () => Promise<Blob>) => void;
   focusChainId?: string | null;
+  chainHighlight?: ChainHighlightConfig;
+  onChangeChainHighlight?: (updated: Partial<ChainHighlightConfig>) => void;
+  hoveredChainId?: string | null;
   ligands?: MolecularLigandInfo[];
   focusedLigand?: MolecularLigandInfo | null;
   hoveredLigand?: MolecularLigandInfo | null;
+}
+
+const GLOW_COLOR_PRESETS = [
+  { hex: '#00f0ff', label: 'Cyan Glow' },
+  { hex: '#10b981', label: 'Emerald Ring' },
+  { hex: '#f43f5e', label: 'Rose Pulse' },
+  { hex: '#f59e0b', label: 'Amber Halo' },
+  { hex: '#a855f7', label: 'Violet Aura' },
+  { hex: '#38bdf8', label: 'Sky Beacon' },
+];
+
+function hexToRgbObj(hex: string): { r: number; g: number; b: number; packed: number } {
+  const clean = (hex || '#00f0ff').replace('#', '');
+  const num = parseInt(clean, 16);
+  if (Number.isNaN(num)) {
+    return { r: 0, g: 240, b: 255, packed: 0x00f0ff };
+  }
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255,
+    packed: num,
+  };
 }
 
 export const MolstarViewport: React.FC<MolstarViewportProps> = ({
@@ -28,6 +60,9 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
   onSetCameraFitRef,
   onGetCanvasBlobRef,
   focusChainId,
+  chainHighlight,
+  onChangeChainHighlight,
+  hoveredChainId,
   ligands,
   focusedLigand,
   hoveredLigand,
@@ -588,11 +623,42 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
     }
   }, [focusedLigand, isStructureLoaded, isMolstarReady]);
 
-  // Highlight ligand on hover
+  // Highlight ligand or chain on hover, and apply persistent Chain Glow / Color Ring
   useEffect(() => {
     if (!isStructureLoaded || !pluginInstanceRef.current) return;
     const viewer = pluginInstanceRef.current;
     if (!isMolstarReady(viewer)) return;
+
+    const activeChainId = hoveredChainId || chainHighlight?.chainId || null;
+    const glowHex = chainHighlight?.color || '#00f0ff';
+    const rgb = hexToRgbObj(glowHex);
+    const dimOthers = chainHighlight?.dimOthers ?? true;
+    const mode = chainHighlight?.mode || 'glow-halo';
+
+    try {
+      // Configure Mol* 3D canvas edge-marking silhouette halo / ring around highlighted/selected chain
+      const canvas3d = viewer.plugin?.canvas3d;
+      if (canvas3d && typeof canvas3d.setProps === 'function') {
+        canvas3d.setProps({
+          renderer: {
+            selectColor: rgb.packed,
+            highlightColor: rgb.packed,
+          },
+          marking: {
+            enabled: true,
+            highlightEdgeColor: rgb.packed,
+            selectEdgeColor: rgb.packed,
+            edgeScale: mode === 'color-ring' ? 3.0 : 2.2,
+            highlightEdgeStrength: 1.0,
+            selectEdgeStrength: 1.0,
+            ghostEdgeStrength: 1.0,
+            innerEdgeFactor: mode === 'color-ring' ? 2.2 : 1.5,
+          },
+        });
+      }
+    } catch {
+      // ignore if canvas3d.setProps structure differs
+    }
 
     try {
       if (hoveredLigand) {
@@ -609,13 +675,150 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
             focus: false,
           })
           ?.catch(() => {});
+      } else if (activeChainId) {
+        // Apply 3D silhouette edge-ring highlight on the chain
+        viewer.visual
+          ?.highlight({
+            data: [
+              { struct_asym_id: activeChainId, color: { r: rgb.r, g: rgb.g, b: rgb.b } },
+              { auth_asym_id: activeChainId, color: { r: rgb.r, g: rgb.g, b: rgb.b } },
+            ],
+            focus: false,
+          })
+          ?.catch(() => {});
       } else {
         viewer.visual?.clearHighlight?.()?.catch?.(() => {});
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
-  }, [hoveredLigand, isStructureLoaded, isMolstarReady]);
+
+    // Apply persistent luminous color selection or full chain isolation on chainHighlight.chainId
+    try {
+      const isIsolate =
+        Boolean(chainHighlight?.isolateOnAction) || mode === 'isolate';
+
+      if (chainHighlight?.chainId) {
+        const targetChain = chainHighlight.chainId;
+        const curChains = statsRef.current?.chains || [];
+
+        // Always clear previous opacity/selection state first so switching chains or modes cleanly resets visibility
+        viewer.visual
+          ?.clearSelection(undefined, { keepColors: true, keepRepresentations: true })
+          ?.catch(() => {});
+
+        if (isIsolate) {
+          // Build selection array that hides all other chains and non-target ligands (opacity: 0)
+          const isolateData: any[] = [
+            {
+              struct_asym_id: targetChain,
+              color: { r: rgb.r, g: rgb.g, b: rgb.b },
+              opacity: 1,
+            },
+            {
+              auth_asym_id: targetChain,
+              color: { r: rgb.r, g: rgb.g, b: rgb.b },
+              opacity: 1,
+            },
+          ];
+
+          curChains.forEach((ch) => {
+            if (ch.id !== targetChain) {
+              isolateData.push({ struct_asym_id: ch.id, opacity: 0 });
+              isolateData.push({ auth_asym_id: ch.id, opacity: 0 });
+            }
+          });
+
+          (ligands || []).forEach((l) => {
+            if (l.chainId !== targetChain || !l.visible) {
+              isolateData.push({
+                struct_asym_id: l.chainId,
+                auth_asym_id: l.chainId,
+                auth_seq_id: l.resSeq,
+                auth_comp_id: l.chemId,
+                label_comp_id: l.chemId,
+                opacity: 0,
+              });
+            }
+          });
+
+          viewer.visual
+            ?.select({
+              data: isolateData,
+              keepColors: true,
+              keepRepresentations: true,
+            })
+            ?.catch(() => {});
+        } else {
+          const nonSelected = dimOthers
+            ? settings.backgroundTheme === 'light'
+              ? { r: 203, g: 213, b: 225 }
+              : { r: 30, g: 41, b: 59 }
+            : undefined;
+
+          viewer.visual
+            ?.select({
+              data: [
+                {
+                  struct_asym_id: targetChain,
+                  color: { r: rgb.r, g: rgb.g, b: rgb.b },
+                  opacity: 1,
+                },
+                {
+                  auth_asym_id: targetChain,
+                  color: { r: rgb.r, g: rgb.g, b: rgb.b },
+                  opacity: 1,
+                },
+              ],
+              nonSelectedColor: nonSelected,
+            })
+            ?.catch(() => {});
+        }
+      } else {
+        // Restore visibility of all chains first
+        viewer.visual
+          ?.clearSelection(undefined, { keepColors: false, keepRepresentations: true })
+          ?.catch(() => {});
+
+        const hiddenLigands = (ligands || []).filter((l) => !l.visible);
+        if (hiddenLigands.length > 0) {
+          viewer.visual
+            ?.select({
+              data: hiddenLigands.map((l) => ({
+                struct_asym_id: l.chainId,
+                auth_asym_id: l.chainId,
+                auth_seq_id: l.resSeq,
+                auth_comp_id: l.chemId,
+                label_comp_id: l.chemId,
+                opacity: 0,
+              })),
+              keepColors: true,
+              keepRepresentations: true,
+            })
+            ?.catch(() => {});
+        } else {
+          // Restore active color scheme when chain highlight/isolation is cleared
+          applyColorSchemeToViewer(viewer, settings.colorScheme);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [
+    hoveredLigand,
+    hoveredChainId,
+    chainHighlight?.chainId,
+    chainHighlight?.color,
+    chainHighlight?.mode,
+    chainHighlight?.dimOthers,
+    chainHighlight?.isolateOnAction,
+    isStructureLoaded,
+    isMolstarReady,
+    settings.backgroundTheme,
+    settings.colorScheme,
+    applyColorSchemeToViewer,
+    ligands,
+  ]);
 
   const dist = stats?.confidenceDistribution;
 
@@ -627,6 +830,85 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
         id="molstar-viewer-wrapper"
         className="w-full h-full relative"
       />
+
+      {/* Luminous Color Ring / Halo Overlay around Highlighted Chain */}
+      {chainHighlight?.chainId && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center overflow-hidden"
+        >
+          {/* Outer atmospheric glow aura */}
+          <div
+            className={`rounded-full transition-all duration-500 ${
+              chainHighlight.pulse ? 'animate-pulse' : ''
+            }`}
+            style={{
+              width: chainHighlight.mode === 'color-ring' ? '440px' : '480px',
+              height: chainHighlight.mode === 'color-ring' ? '440px' : '480px',
+              boxShadow:
+                chainHighlight.mode === 'color-ring'
+                  ? `0 0 65px 8px ${chainHighlight.color}55, inset 0 0 55px 8px ${chainHighlight.color}44`
+                  : `0 0 95px 24px ${chainHighlight.color}40, inset 0 0 70px 18px ${chainHighlight.color}30`,
+              border:
+                chainHighlight.mode === 'color-ring'
+                  ? `3px solid ${chainHighlight.color}`
+                  : `1.5px solid ${chainHighlight.color}88`,
+              background: `radial-gradient(circle, ${chainHighlight.color}14 0%, transparent 70%)`,
+            }}
+          />
+
+          {/* Secondary precision ring when in Color Ring mode */}
+          {chainHighlight.mode === 'color-ring' && (
+            <div
+              className="absolute rounded-full border border-dashed transition-all duration-500"
+              style={{
+                width: '380px',
+                height: '380px',
+                borderColor: `${chainHighlight.color}aa`,
+                boxShadow: `0 0 28px ${chainHighlight.color}66`,
+              }}
+            />
+          )}
+
+          {/* Top Chain Glow Beacon Pill */}
+          <div
+            className="pointer-events-auto absolute top-4 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border flex items-center gap-2.5 shadow-2xl text-xs"
+            style={{
+              borderColor: `${chainHighlight.color}99`,
+              boxShadow: `0 0 24px ${chainHighlight.color}40`,
+            }}
+          >
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${chainHighlight.pulse ? 'animate-ping' : ''}`}
+              style={{ backgroundColor: chainHighlight.color }}
+            />
+            <span
+              className="w-2.5 h-2.5 rounded-full -ml-5"
+              style={{ backgroundColor: chainHighlight.color }}
+            />
+            <span className="font-bold text-white tracking-wide">
+              Chain {chainHighlight.chainId}
+            </span>
+            <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-200">
+              {chainHighlight.mode === 'color-ring'
+                ? 'Color Ring'
+                : chainHighlight.mode === 'isolate'
+                ? 'Isolated Glow'
+                : 'Glow Halo'}
+            </span>
+            {onChangeChainHighlight && (
+              <button
+                type="button"
+                onClick={() => onChangeChainHighlight({ chainId: null })}
+                title="Clear Chain Glow / Ring"
+                className="p-0.5 rounded-full hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Loading Overlay */}
       {isLoading && (
@@ -796,6 +1078,142 @@ export const MolstarViewport: React.FC<MolstarViewportProps> = ({
             <div className="flex justify-between text-[9px] text-slate-400 font-mono">
               <span>Rigid (Low B)</span>
               <span>Flexible (High B)</span>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Chain Glow & Color Ring Selector Card */}
+        {stats && stats.chains.length > 0 && onChangeChainHighlight && chainHighlight && (
+          <div
+            id="molstar-chain-glow-card"
+            className="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-800/90 rounded-2xl p-3 shadow-2xl space-y-2.5 text-[11px]"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-white flex items-center gap-1.5">
+                <CircleDot
+                  className="w-3.5 h-3.5"
+                  style={{ color: chainHighlight.color || '#00f0ff' }}
+                />
+                <span>Chain Glow & Color Ring</span>
+              </span>
+              {chainHighlight.chainId && (
+                <button
+                  type="button"
+                  onClick={() => onChangeChainHighlight({ chainId: null })}
+                  className="text-[10px] font-semibold text-rose-400 hover:text-rose-300 flex items-center gap-0.5"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Off</span>
+                </button>
+              )}
+            </div>
+
+            {/* Chain Selector Pills */}
+            <div className="flex flex-wrap items-center gap-1">
+              {stats.chains.map((ch) => {
+                const isSelected = chainHighlight.chainId === ch.id;
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() =>
+                      onChangeChainHighlight({
+                        chainId: isSelected ? null : ch.id,
+                      })
+                    }
+                    className={`px-2 py-1 rounded-lg font-mono text-[10px] font-bold border transition-all flex items-center gap-1 ${
+                      isSelected
+                        ? 'text-white shadow-md'
+                        : 'bg-slate-950/80 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+                    }`}
+                    style={
+                      isSelected
+                        ? {
+                            backgroundColor: `${chainHighlight.color}30`,
+                            borderColor: chainHighlight.color,
+                            boxShadow: `0 0 12px ${chainHighlight.color}55`,
+                          }
+                        : undefined
+                    }
+                    title={`${ch.name} (${ch.residueCount} residues) — Click to toggle glow / ring`}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{
+                        backgroundColor: isSelected ? chainHighlight.color : '#64748b',
+                      }}
+                    />
+                    <span>Chain {ch.id}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Glow Mode & Color Swatches (shown when a chain is active or always accessible) */}
+            <div className="space-y-2 pt-1 border-t border-slate-800/80">
+              <div className="grid grid-cols-3 gap-1">
+                {(
+                  [
+                    { id: 'glow-halo', label: 'Glow Halo' },
+                    { id: 'color-ring', label: 'Color Ring' },
+                    { id: 'isolate', label: 'Isolate' },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onChangeChainHighlight({ mode: m.id })}
+                    className={`py-1 px-1.5 rounded-lg text-[10px] font-semibold border transition-colors ${
+                      chainHighlight.mode === m.id
+                        ? 'bg-indigo-600/30 border-indigo-500/60 text-white'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  {GLOW_COLOR_PRESETS.map((preset) => (
+                    <button
+                      key={preset.hex}
+                      type="button"
+                      onClick={() => onChangeChainHighlight({ color: preset.hex })}
+                      title={preset.label}
+                      className={`w-4 h-4 rounded-full transition-transform ${
+                        chainHighlight.color.toLowerCase() === preset.hex.toLowerCase()
+                          ? 'scale-125 ring-2 ring-white'
+                          : 'opacity-75 hover:opacity-100'
+                      }`}
+                      style={{
+                        backgroundColor: preset.hex,
+                        boxShadow: `0 0 8px ${preset.hex}88`,
+                      }}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={chainHighlight.color}
+                    onChange={(e) => onChangeChainHighlight({ color: e.target.value })}
+                    title="Custom Glow / Ring Color"
+                    className="w-4 h-4 rounded cursor-pointer bg-transparent border-0 p-0"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onChangeChainHighlight({ pulse: !chainHighlight.pulse })}
+                  className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${
+                    chainHighlight.pulse
+                      ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                      : 'bg-slate-950 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  Pulse
+                </button>
+              </div>
             </div>
           </div>
         )}
