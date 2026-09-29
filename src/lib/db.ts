@@ -3,6 +3,37 @@ import { ArchiveItem } from '../types';
 const DB_NAME = 'keeper_vault_indexed_db';
 const DB_VERSION = 1;
 const STORE_NAME = 'assets';
+const DELETED_IDS_KEY = 'keeper_vault_deleted_ids';
+
+function getDeletedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_IDS_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function markIdDeleted(id: string): void {
+  try {
+    const set = getDeletedIds();
+    set.add(id);
+    localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function unmarkIdDeleted(id: string): void {
+  try {
+    const set = getDeletedIds();
+    if (set.delete(id)) {
+      localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
 
 function openVaultDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -113,15 +144,19 @@ export async function saveAsset(asset: ArchiveItem): Promise<void> {
     }
 
     const request = store.put(toStore);
-    request.onsuccess = () => resolve();
+    request.onsuccess = () => {
+      unmarkIdDeleted(asset.id);
+      resolve();
+    };
     request.onerror = () => reject(request.error);
   });
 }
 
 /**
- * Deletes an asset from IndexedDB.
+ * Deletes an asset from IndexedDB and records deletion so seed items are not re-hydrated.
  */
 export async function deleteAsset(id: string): Promise<void> {
+  markIdDeleted(id);
   const db = await openVaultDatabase();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
@@ -196,7 +231,55 @@ export const DEFAULT_VAULT_ITEMS: ArchiveItem[] = [
     license: 'RCSB Open Data',
     version: '1.74Å',
     compatibility: ['Mol* Viewer', 'PyMOL 3.0', 'ChimeraX 1.8'],
-    pdbId: '4hhb',
+    pdbId: '4HHB',
+  },
+  {
+    id: 'vault-mol-1cbs',
+    name: 'Retinoic Acid-Binding Protein (1CBS)',
+    description: 'Cellular retinoic acid-binding protein II complexed with all-trans-retinoic acid morphogen ligand at 1.80 Å resolution.',
+    category: 'molecular',
+    format: 'pdb',
+    size: 168400,
+    tier: 'rare',
+    tags: ['protein', 'retinoic-acid', 'transport', 'ligand', 'rcsb', '1cbs'],
+    dateAdded: '2026-03-16T11:20:00.000Z',
+    author: 'Kleywegt, G.J., Jones, T.A.',
+    license: 'RCSB Open Data',
+    version: '1.80Å',
+    compatibility: ['Mol* Viewer', 'PyMOL 3.0', 'AlphaFold 3'],
+    pdbId: '1CBS',
+  },
+  {
+    id: 'vault-mol-6vxx',
+    name: 'SARS-CoV-2 Spike Glycoprotein (6VXX)',
+    description: 'Cryo-EM homotrimer structure of the viral spike glycoprotein in the closed prefusion conformation with N-linked glycans.',
+    category: 'molecular',
+    format: 'pdb',
+    size: 1894000,
+    tier: 'masterwork',
+    tags: ['viral', 'spike', 'cryo-em', 'glycoprotein', 'immunology', '6vxx'],
+    dateAdded: '2026-03-17T08:45:00.000Z',
+    author: 'Walls, A.C., Veesler, D. et al.',
+    license: 'RCSB Open Data',
+    version: '2.80Å',
+    compatibility: ['Mol* Viewer', 'ChimeraX 1.8', 'Coot'],
+    pdbId: '6VXX',
+  },
+  {
+    id: 'vault-mol-1crn',
+    name: 'Crambin Atomic Resolution Model (1CRN)',
+    description: 'Ultra-high resolution hydrophobic plant seed protein structure with well-defined disulfide bridges and pLDDT/B-factor certainty.',
+    category: 'molecular',
+    format: 'pdb',
+    size: 64200,
+    tier: 'masterwork',
+    tags: ['high-res', 'crambin', 'disulfide', 'benchmark', '1crn'],
+    dateAdded: '2026-03-17T19:10:00.000Z',
+    author: 'Teeter, M.M., Hendrickson, W.A.',
+    license: 'RCSB Open Data',
+    version: '0.54Å',
+    compatibility: ['Mol* Viewer', 'PyMOL 3.0', 'PHENIX'],
+    pdbId: '1CRN',
   },
   {
     id: 'vault-script-blender-rig',
@@ -379,20 +462,91 @@ __global__ void rayVoxelTraversalKernel(const Ray* rays, uint32_t* hitBuffer, in
 ];
 
 /**
- * Initializes the vault database with defaults if empty.
+ * Formats an ISO timestamp into a full human-readable date and time string
+ * e.g., "Sep 29, 2026 · 05:31:29 AM"
+ */
+export function formatVaultDateTime(isoString?: string): string {
+  if (!isoString) return 'Unknown timestamp';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return isoString;
+
+  const datePart = d.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  });
+  const timePart = d.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  return `${datePart} · ${timePart}`;
+}
+
+/**
+ * Formats an ISO timestamp into a compact tabular date + time string
+ * e.g., "2026-09-29 05:31"
+ */
+export function formatVaultShortTimestamp(isoString?: string): string {
+  if (!isoString) return '—';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return isoString;
+
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const sec = String(d.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${sec}`;
+}
+
+/**
+ * Returns a concise relative time label (e.g., "just now", "12m ago", "3d ago")
+ */
+export function formatRelativeTime(isoString?: string): string {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) return 'just now';
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  return `${diffMonths}mo ago`;
+}
+
+/**
+ * Initializes the vault database with defaults and merges any new seed items.
  */
 export async function initVaultStorage(): Promise<ArchiveItem[]> {
   try {
     const existing = await getAllAssets();
-    if (existing.length === 0) {
-      for (const item of DEFAULT_VAULT_ITEMS) {
+    const existingIds = new Set(existing.map((i) => i.id));
+    const deletedIds = getDeletedIds();
+    let addedSeed = false;
+
+    for (const item of DEFAULT_VAULT_ITEMS) {
+      if (!existingIds.has(item.id) && !deletedIds.has(item.id)) {
         await saveAsset(item);
+        addedSeed = true;
       }
+    }
+
+    if (addedSeed || existing.length === 0) {
       return await getAllAssets();
     }
     return existing;
   } catch (err) {
     console.warn('Could not initialize vault storage:', err);
-    return DEFAULT_VAULT_ITEMS;
+    const deletedIds = getDeletedIds();
+    return DEFAULT_VAULT_ITEMS.filter((item) => !deletedIds.has(item.id));
   }
 }

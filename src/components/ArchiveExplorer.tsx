@@ -19,15 +19,18 @@ import {
   CheckCircle2,
   ChevronDown,
   Info,
+  Trash2,
 } from 'lucide-react';
 import { ArchiveItem, AssetCategory, AssetTier, ArchiveSortField, SortOrder } from '../types';
 import { semanticSearchVault } from '../lib/gemini';
 import { downloadAssetBundle } from '../utils/bundleExport';
+import { formatVaultDateTime, formatVaultShortTimestamp, formatRelativeTime } from '../lib/db';
 
 interface ArchiveExplorerProps {
   isOpen: boolean;
   onClose: () => void;
   items: ArchiveItem[];
+  activeModelName?: string;
   onLoadAsset: (item: ArchiveItem) => void;
   onInspectAsset: (item: ArchiveItem) => void;
   onOpenUpload: () => void;
@@ -38,6 +41,7 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
   isOpen,
   onClose,
   items,
+  activeModelName = '',
   onLoadAsset,
   onInspectAsset,
   onOpenUpload,
@@ -49,6 +53,8 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
   const [selectedTier, setSelectedTier] = useState<AssetTier | 'all'>('all');
   const [sortField, setSortField] = useState<ArchiveSortField>('dateAdded');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [catalogueLayout, setCatalogueLayout] = useState<'grid' | 'table'>('grid');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // AI Semantic Search State
   const [isAiSearching, setIsAiSearching] = useState(false);
@@ -312,7 +318,7 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
                 onChange={(e) => setSortField(e.target.value as ArchiveSortField)}
                 className="px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
               >
-                <option value="dateAdded">Date Added</option>
+                <option value="dateAdded">Date Pushed (Timestamp)</option>
                 <option value="name">Name (A-Z)</option>
                 <option value="size">File Size</option>
                 <option value="tier">Vault Tier</option>
@@ -325,6 +331,30 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
               >
                 {sortOrder === 'asc' ? '↑ ASC' : '↓ DESC'}
               </button>
+
+              {/* View Mode Switcher: Grid vs Catalogue Table */}
+              <div className="flex items-center p-0.5 rounded-xl bg-slate-950 border border-slate-800 ml-1">
+                <button
+                  onClick={() => setCatalogueLayout('grid')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                    catalogueLayout === 'grid'
+                      ? 'bg-slate-800 text-white'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Cards
+                </button>
+                <button
+                  onClick={() => setCatalogueLayout('table')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                    catalogueLayout === 'table'
+                      ? 'bg-slate-800 text-white'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Table
+                </button>
+              </div>
             </div>
           </div>
 
@@ -347,7 +377,7 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
           )}
         </div>
 
-        {/* Asset Grid Body */}
+        {/* Asset Grid / Catalogue Table Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           {filteredItems.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-8">
@@ -363,34 +393,213 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
                 Ingest New Asset
               </button>
             </div>
+          ) : catalogueLayout === 'table' ? (
+            <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-950/50">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/90 text-slate-400 font-semibold">
+                    <th className="py-3 px-4">Model / Asset Name</th>
+                    <th className="py-3 px-3">Category</th>
+                    <th className="py-3 px-3">Format</th>
+                    <th className="py-3 px-3">Storage Source</th>
+                    <th className="py-3 px-3">Pushed Timestamp</th>
+                    <th className="py-3 px-3 text-right">Size</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/70">
+                  {filteredItems.map((item) => {
+                    const isVisualizing =
+                      Boolean(activeModelName) &&
+                      (activeModelName.toLowerCase().includes(item.name.toLowerCase()) ||
+                        (item.pdbId && activeModelName.toLowerCase().includes(item.pdbId.toLowerCase())) ||
+                        (item.sampleType && activeModelName.toLowerCase().includes(item.sampleType.toLowerCase())));
+                    const is3DOrMol = item.category === '3d-model' || item.category === 'molecular';
+                    const relTime = formatRelativeTime(item.dateAdded);
+
+                    return (
+                      <tr
+                        key={item.id}
+                        className={`transition-colors ${
+                          isVisualizing ? 'bg-indigo-950/30' : 'hover:bg-slate-900/60'
+                        }`}
+                      >
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 shrink-0">
+                              {getCategoryIcon(item.category)}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-white flex items-center gap-2">
+                                <span>{item.name}</span>
+                                {isVisualizing && (
+                                  <span className="text-[10px] font-semibold text-emerald-400">
+                                    · Active in Viewport
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-400 line-clamp-1">
+                                {item.description}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 capitalize text-slate-300">
+                          {item.category.replace('-', ' ')}
+                        </td>
+                        <td className="py-3 px-3 font-mono uppercase text-slate-300">
+                          .{item.format}
+                        </td>
+                        <td className="py-3 px-3 text-slate-400">
+                          {item.blob
+                            ? 'IndexedDB Binary'
+                            : item.pdbId
+                            ? `RCSB (${item.pdbId})`
+                            : 'Vault Catalogue'}
+                        </td>
+                        <td
+                          className="py-3 px-3 font-mono tabular-nums text-slate-300"
+                          title={`Pushed: ${formatVaultDateTime(item.dateAdded)} (${item.dateAdded})`}
+                        >
+                          <div>{formatVaultShortTimestamp(item.dateAdded)}</div>
+                          {relTime && (
+                            <div className="text-[10px] text-indigo-300/80">{relTime}</div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-400">
+                          {(item.size / 1024).toFixed(1)} KB
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {onDeleteAsset && (
+                              confirmDeleteId === item.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => {
+                                      onDeleteAsset(item.id);
+                                      setConfirmDeleteId(null);
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold transition-colors"
+                                  >
+                                    Confirm Delete
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setConfirmDeleteId(item.id)}
+                                  className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/80 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-500/40 transition-colors"
+                                  title="Remove model from IndexedDB database"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )
+                            )}
+                            <button
+                              onClick={() => onInspectAsset(item)}
+                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium transition-colors"
+                            >
+                              Inspect
+                            </button>
+                            <button
+                              onClick={() => {
+                                onLoadAsset(item);
+                                onClose();
+                              }}
+                              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition-colors inline-flex items-center gap-1"
+                            >
+                              <Play className="w-3 h-3 fill-current" />
+                              <span>{is3DOrMol ? 'Visualize' : 'Open'}</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredItems.map((item) => {
                 const matchReason = aiReasoningMap[item.id];
+                const isVisualizing =
+                  Boolean(activeModelName) &&
+                  (activeModelName.toLowerCase().includes(item.name.toLowerCase()) ||
+                    (item.pdbId && activeModelName.toLowerCase().includes(item.pdbId.toLowerCase())) ||
+                    (item.sampleType && activeModelName.toLowerCase().includes(item.sampleType.toLowerCase())));
+                const is3DOrMol = item.category === '3d-model' || item.category === 'molecular';
+
                 return (
                   <div
                     key={item.id}
-                    className="group rounded-2xl bg-slate-950/60 hover:bg-slate-950/90 border border-slate-800 hover:border-indigo-500/50 p-4 transition-all duration-200 flex flex-col justify-between shadow-md hover:shadow-xl hover:shadow-indigo-500/5"
+                    className={`group rounded-2xl bg-slate-950/60 hover:bg-slate-950/90 border p-4 transition-all duration-200 flex flex-col justify-between shadow-md hover:shadow-xl ${
+                      isVisualizing
+                        ? 'border-indigo-500/70 bg-indigo-950/20'
+                        : 'border-slate-800 hover:border-indigo-500/50'
+                    }`}
                   >
                     <div>
-                      {/* Top Badges */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-1.5">
-                          <div className="p-1.5 rounded-lg bg-slate-900 border border-slate-800">
-                            {getCategoryIcon(item.category)}
+                      {/* Visual Preview Header */}
+                      <div
+                        onClick={() => {
+                          onLoadAsset(item);
+                          onClose();
+                        }}
+                        className="relative h-28 mb-3 rounded-xl bg-slate-900/90 border border-slate-800/90 overflow-hidden flex items-center justify-center cursor-pointer group/preview"
+                      >
+                        {item.category === 'molecular' ? (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <Dna className="w-9 h-9 text-emerald-400/80 group-hover/preview:scale-110 transition-transform" />
+                            <div className="flex items-center gap-1">
+                              <span className="w-3 h-1 rounded-full" style={{ backgroundColor: '#0053D6' }} />
+                              <span className="w-3 h-1 rounded-full" style={{ backgroundColor: '#65CBF3' }} />
+                              <span className="w-3 h-1 rounded-full" style={{ backgroundColor: '#FFDB13' }} />
+                              <span className="w-3 h-1 rounded-full" style={{ backgroundColor: '#FF7D45' }} />
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-400">
+                              {item.pdbId ? `PDB ${item.pdbId} · ${item.version || '3D'}` : 'Mol* Structure'}
+                            </span>
                           </div>
-                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 uppercase">
-                            .{item.format}
-                          </span>
-                        </div>
+                        ) : item.category === '3d-model' ? (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <Box className="w-9 h-9 text-cyan-400/80 group-hover/preview:scale-110 transition-transform" />
+                            <span className="text-[10px] font-mono text-slate-400">
+                              Three.js 3D Mesh · .{item.format.toUpperCase()}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="w-full h-full p-3 font-mono text-[10px] text-slate-400 bg-slate-950/80 overflow-hidden leading-relaxed">
+                            {(item.codeContent || '// Script Asset').slice(0, 160)}
+                          </div>
+                        )}
 
-                        <span
-                          className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${getTierColor(
-                            item.tier
-                          )}`}
-                        >
-                          {item.tier}
-                        </span>
+                        {/* Hover Visualize Overlay */}
+                        <div className="absolute inset-0 bg-slate-950/70 opacity-0 group-hover/preview:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-xs font-semibold text-white">
+                          <Play className="w-4 h-4 fill-current text-indigo-400" />
+                          <span>{is3DOrMol ? 'Click to Visualize in 3D' : 'Click to Open Script'}</span>
+                        </div>
+                      </div>
+
+                      {/* Metadata Kicker */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                        <div className="flex items-center gap-1.5 font-mono">
+                          <span className="uppercase text-slate-300 font-semibold">.{item.format}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{item.blob ? 'IndexedDB' : item.pdbId ? 'RCSB' : 'Vault'}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="capitalize">{item.tier}</span>
+                        </div>
+                        {isVisualizing && (
+                          <span className="text-[10px] font-semibold text-emerald-400">
+                            Visualizing
+                          </span>
+                        )}
                       </div>
 
                       {/* Title & Description */}
@@ -401,7 +610,7 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
                         {item.description}
                       </p>
 
-                      {/* AI Search Match Reason Chip */}
+                      {/* AI Search Match Reason */}
                       {matchReason && (
                         <div className="mt-2.5 p-2 rounded-lg bg-indigo-950/50 border border-indigo-500/20 text-[11px] text-indigo-200 flex items-start gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
@@ -409,33 +618,61 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
                         </div>
                       )}
 
-                      {/* Compatibility Badges */}
+                      {/* Compatibility Text */}
                       {item.compatibility && item.compatibility.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-3">
-                          {item.compatibility.slice(0, 2).map((comp, idx) => (
-                            <span
-                              key={idx}
-                              className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-indigo-300 font-medium"
-                            >
-                              ✓ {comp}
-                            </span>
-                          ))}
-                          {item.compatibility.length > 2 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
-                              +{item.compatibility.length - 2}
-                            </span>
-                          )}
+                        <div className="mt-2.5 text-[11px] text-slate-400 truncate">
+                          {item.compatibility.join(' · ')}
                         </div>
                       )}
+
+                      {/* Pushed Date & Exact Timestamp */}
+                      <div
+                        className="mt-2 flex items-center justify-between text-[11px] text-slate-400 font-mono tabular-nums"
+                        title={`Pushed to Vault: ${formatVaultDateTime(item.dateAdded)} (${item.dateAdded})`}
+                      >
+                        <span>Pushed {formatVaultShortTimestamp(item.dateAdded)}</span>
+                        {formatRelativeTime(item.dateAdded) && (
+                          <span className="text-indigo-300/90">{formatRelativeTime(item.dateAdded)}</span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Bottom Metadata & Actions */}
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                      <div className="text-[11px] text-slate-500">
+                    <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                      <div className="text-[11px] text-slate-400 font-mono tabular-nums">
                         {(item.size / 1024).toFixed(1)} KB
                       </div>
 
                       <div className="flex items-center gap-1.5">
+                        {onDeleteAsset && (
+                          confirmDeleteId === item.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  onDeleteAsset(item.id);
+                                  setConfirmDeleteId(null);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDeleteId(item.id)}
+                              className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/80 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-500/40 transition-colors"
+                              title="Remove from IndexedDB database"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )
+                        )}
                         <button
                           onClick={() => onInspectAsset(item)}
                           className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
@@ -449,11 +686,11 @@ export const ArchiveExplorer: React.FC<ArchiveExplorerProps> = ({
                             onLoadAsset(item);
                             onClose();
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1"
+                          className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition-all flex items-center gap-1"
                           title="Load into 3D / Mol* Viewer"
                         >
                           <Play className="w-3 h-3 fill-current" />
-                          <span>View</span>
+                          <span>{is3DOrMol ? 'Visualize' : 'Open'}</span>
                         </button>
                       </div>
                     </div>

@@ -217,6 +217,33 @@ export default function App() {
         fileName: `${id}.pdb`,
       };
       setViewerMode('molstar');
+
+      // Ensure fetched PDB structure is catalogued in the Vault
+      setVaultItems((prev) => {
+        const exists = prev.some(
+          (item) => item.pdbId?.toUpperCase() === id || item.id === `vault-mol-${id.toLowerCase()}`
+        );
+        if (exists) return prev;
+        const newMolAsset: ArchiveItem = {
+          id: `vault-mol-${id.toLowerCase()}`,
+          name: `${stats.title} (${id})`,
+          description: `${stats.classification || 'Macromolecule'} resolved via ${stats.experimentalMethod || 'RCSB PDB'}${stats.resolution ? ` at ${stats.resolution} Å` : ''}.`,
+          category: 'molecular',
+          format: 'pdb',
+          size: text.length,
+          tier: 'rare',
+          tags: ['pdb', id.toLowerCase(), 'molecular', (stats.classification || 'protein').toLowerCase()],
+          dateAdded: new Date().toISOString(),
+          author: stats.organism || 'RCSB PDB',
+          license: 'RCSB Open Data',
+          version: stats.resolution ? `${stats.resolution}Å` : '1.0',
+          compatibility: ['Mol* Viewer', 'PyMOL 3.0'],
+          pdbId: id,
+          stats,
+        };
+        saveAsset(newMolAsset).catch(() => {});
+        return [newMolAsset, ...prev];
+      });
     } catch (err: any) {
       console.error('Error fetching PDB:', err);
       // Fallback: still pass pdbId to Mol* directly
@@ -632,6 +659,13 @@ export default function App() {
           onFocusLigand={handleFocusLigand}
           onHoverLigand={handleHoverLigand}
           onUpdateMaterialColor={handleUpdateMaterialColor}
+          vaultItems={vaultItems}
+          activeModelName={modelName}
+          onLoadVaultItem={handleLoadArchiveItem}
+          onInspectVaultItem={(item) => setSelectedArchiveItem(item)}
+          onDeleteVaultItem={handleDeleteAsset}
+          onOpenArchiveExplorer={() => setIsOpenArchiveExplorer(true)}
+          onOpenUploadModal={() => setIsOpenUploadModal(true)}
           isOpen={isLeftPanelOpen}
           onToggleOpen={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
         />
@@ -722,6 +756,15 @@ export default function App() {
             >
               <Dna className="w-3.5 h-3.5 text-emerald-200" />
               <span>Mol* Viewer</span>
+            </button>
+            <div className="w-[1px] h-4 bg-slate-800 mx-1" />
+            <button
+              onClick={() => setIsOpenArchiveExplorer(true)}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 text-amber-300 hover:bg-slate-800 transition-all"
+              title="Open Full Vault Catalogue"
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-400" />
+              <span>Catalogue ({vaultItems.length})</span>
             </button>
           </div>
 
@@ -927,6 +970,7 @@ export default function App() {
         isOpen={isOpenArchiveExplorer}
         onClose={() => setIsOpenArchiveExplorer(false)}
         items={vaultItems}
+        activeModelName={modelName}
         onLoadAsset={handleLoadArchiveItem}
         onInspectAsset={(item) => setSelectedArchiveItem(item)}
         onOpenUpload={() => {

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { ArchiveItem, AssetCategory, AssetTier } from '../types';
 import { autofillAssetMetadata } from '../lib/gemini';
-import { saveAsset } from '../lib/db';
+import { saveAsset, formatVaultDateTime } from '../lib/db';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -228,8 +228,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 </div>
                 <div>
                   <div className="text-xs font-bold text-white truncate max-w-xs">{file.name}</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">
-                    {(file.size / 1024).toFixed(1)} KB • {format.toUpperCase()}
+                  <div className="text-[11px] text-slate-400 mt-0.5 font-mono tabular-nums">
+                    {(file.size / 1024).toFixed(1)} KB · {format.toUpperCase()} · Push Timestamp: {formatVaultDateTime(new Date().toISOString())}
                   </div>
                 </div>
               </div>

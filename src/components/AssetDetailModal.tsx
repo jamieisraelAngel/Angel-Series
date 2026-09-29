@@ -25,6 +25,7 @@ import { ArchiveItem, AIAnalysisResult, AssetTier } from '../types';
 import { analyzeAsset } from '../lib/gemini';
 import { downloadAssetBundle } from '../utils/bundleExport';
 import { ScriptCodeViewer } from './ScriptCodeViewer';
+import { formatVaultDateTime, formatVaultShortTimestamp, formatRelativeTime } from '../lib/db';
 
 interface AssetDetailModalProps {
   item: ArchiveItem | null;
@@ -47,9 +48,11 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isDownloadingBundle, setIsDownloadingBundle] = useState(false);
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(item?.aiAnalysis || null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Sync state if item changes
   React.useEffect(() => {
+    setConfirmingDelete(false);
     if (item) {
       setAnalysis(item.aiAnalysis || null);
       if (item.category === 'script' || item.category === 'shader') {
@@ -145,9 +148,10 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                   .{item.format}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {item.category.toUpperCase()} • {(item.size / 1024).toFixed(1)} KB • Added{' '}
-                {new Date(item.dateAdded).toLocaleDateString()}
+              <p className="text-xs text-slate-400 mt-0.5 font-mono tabular-nums">
+                {item.category.toUpperCase()} · {(item.size / 1024).toFixed(1)} KB · Pushed{' '}
+                {formatVaultDateTime(item.dateAdded)}
+                {formatRelativeTime(item.dateAdded) ? ` (${formatRelativeTime(item.dateAdded)})` : ''}
               </p>
             </div>
           </div>
@@ -301,10 +305,13 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                 <div className="p-3 rounded-xl bg-slate-950/40 border border-slate-800">
                   <div className="flex items-center gap-1.5 text-slate-400 text-xs mb-1">
                     <Calendar className="w-3.5 h-3.5" />
-                    <span>Version</span>
+                    <span>Pushed Timestamp</span>
                   </div>
-                  <div className="text-xs font-semibold text-slate-200 truncate">
-                    {item.version || '1.0.0'}
+                  <div
+                    className="text-xs font-semibold text-slate-200 font-mono tabular-nums truncate"
+                    title={formatVaultDateTime(item.dateAdded)}
+                  >
+                    {formatVaultShortTimestamp(item.dateAdded)}
                   </div>
                 </div>
 
@@ -536,6 +543,18 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
                     <span className="text-slate-400">Tier Quality:</span>
                     <p className="font-mono text-slate-200 uppercase mt-0.5">{item.tier}</p>
                   </div>
+                  <div>
+                    <span className="text-slate-400">Pushed Date & Time (Local):</span>
+                    <p className="font-mono tabular-nums text-slate-200 mt-0.5">
+                      {formatVaultDateTime(item.dateAdded)}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Ingestion Timestamp (ISO-8601 UTC):</span>
+                    <p className="font-mono tabular-nums text-slate-200 mt-0.5">
+                      {item.dateAdded}
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -557,18 +576,37 @@ export const AssetDetailModal: React.FC<AssetDetailModalProps> = ({
         <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between">
           <div>
             {onDeleteAsset && (
-              <button
-                onClick={() => {
-                  if (confirm(`Remove "${item.name}" from the KEEPER Vault?`)) {
-                    onDeleteAsset(item.id);
-                    onClose();
-                  }
-                }}
-                className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1.5 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Delete from Vault</span>
-              </button>
+              confirmingDelete ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-rose-300 font-medium">
+                    Remove from IndexedDB?
+                  </span>
+                  <button
+                    onClick={() => {
+                      onDeleteAsset(item.id);
+                      setConfirmingDelete(false);
+                      onClose();
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors"
+                  >
+                    Confirm Delete
+                  </button>
+                  <button
+                    onClick={() => setConfirmingDelete(false)}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1.5 transition-colors px-2.5 py-1.5 rounded-xl hover:bg-rose-950/40"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove from Database</span>
+                </button>
+              )
             )}
           </div>
 

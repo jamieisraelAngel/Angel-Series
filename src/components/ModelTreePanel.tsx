@@ -20,15 +20,19 @@ import {
   XCircle,
   Sparkles,
   RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import {
   AnimationClipInfo,
+  ArchiveItem,
+  AssetCategory,
   MaterialInfo,
   MeshNodeItem,
   MolecularLigandInfo,
   MolecularStats,
   ViewerMode,
 } from '../types';
+import { formatVaultDateTime, formatVaultShortTimestamp, formatRelativeTime } from '../lib/db';
 
 interface ModelTreePanelProps {
   viewerMode: ViewerMode;
@@ -53,6 +57,13 @@ interface ModelTreePanelProps {
   onFocusLigand?: (ligand: MolecularLigandInfo) => void;
   onHoverLigand?: (ligand: MolecularLigandInfo | null) => void;
   onUpdateMaterialColor: (matId: string, hexColor: string) => void;
+  vaultItems?: ArchiveItem[];
+  activeModelName?: string;
+  onLoadVaultItem?: (item: ArchiveItem) => void;
+  onInspectVaultItem?: (item: ArchiveItem) => void;
+  onDeleteVaultItem?: (id: string) => void;
+  onOpenArchiveExplorer?: () => void;
+  onOpenUploadModal?: () => void;
   isOpen: boolean;
   onToggleOpen: () => void;
 }
@@ -80,12 +91,22 @@ export const ModelTreePanel: React.FC<ModelTreePanelProps> = ({
   onFocusLigand,
   onHoverLigand,
   onUpdateMaterialColor,
+  vaultItems = [],
+  activeModelName = '',
+  onLoadVaultItem,
+  onInspectVaultItem,
+  onDeleteVaultItem,
+  onOpenArchiveExplorer,
+  onOpenUploadModal,
   isOpen,
   onToggleOpen,
 }) => {
-  const [activeTab, setActiveTab] = useState<'hierarchy' | 'materials' | 'animations' | 'ligands'>('hierarchy');
+  const [activeTab, setActiveTab] = useState<'vault' | 'hierarchy' | 'materials' | 'animations' | 'ligands'>('vault');
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [ligandFilter, setLigandFilter] = useState<string>('');
+  const [vaultFilter, setVaultFilter] = useState<string>('');
+  const [vaultCategory, setVaultCategory] = useState<'all' | AssetCategory>('all');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const toggleNodeExpand = (id: string) => {
     setExpandedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -282,71 +303,84 @@ export const ModelTreePanel: React.FC<ModelTreePanelProps> = ({
     >
       <div className="w-80 h-full bg-slate-900/95 backdrop-blur-xl border-r border-slate-800 flex flex-col overflow-hidden shadow-2xl">
         {/* Header Tabs */}
-        <div className="flex items-center border-b border-slate-800 bg-slate-950/40 p-1 shrink-0">
+        <div className="flex items-center border-b border-slate-800 bg-slate-950/40 p-1 shrink-0 gap-0.5">
+          <button
+            id="sidebar-tab-vault-catalogue"
+            onClick={() => setActiveTab('vault')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors ${
+              activeTab === 'vault'
+                ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="truncate">Vault ({vaultItems.length})</span>
+          </button>
+
           {viewerMode === 'molstar' ? (
             <>
               <button
                 onClick={() => setActiveTab('hierarchy')}
-                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors ${
                   activeTab === 'hierarchy'
                     ? 'bg-slate-800 text-white shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Dna className="w-3.5 h-3.5 text-emerald-400" />
+                <Dna className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>Chains</span>
               </button>
 
               <button
                 id="sidebar-tab-ligands"
                 onClick={() => setActiveTab('ligands')}
-                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors ${
                   activeTab === 'ligands'
                     ? 'bg-slate-800 text-white shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Atom className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Ligands ({ligands.length})</span>
+                <Atom className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span className="truncate">Ligands ({ligands.length})</span>
               </button>
             </>
           ) : (
             <>
               <button
                 onClick={() => setActiveTab('hierarchy')}
-                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors ${
                   activeTab === 'hierarchy'
                     ? 'bg-slate-800 text-white shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Hierarchy</span>
+                <Box className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span className="truncate">Nodes</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('materials')}
-                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors ${
                   activeTab === 'materials'
                     ? 'bg-slate-800 text-white shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Palette className="w-3.5 h-3.5 text-pink-400" />
-                <span>Materials</span>
+                <Palette className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+                <span className="truncate">Mats</span>
               </button>
 
               {animations.length > 0 && (
                 <button
                   onClick={() => setActiveTab('animations')}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-colors ${
                     activeTab === 'animations'
                       ? 'bg-slate-800 text-white shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  <Film className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Clips ({animations.length})</span>
+                  <Film className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>Clips</span>
                 </button>
               )}
             </>
@@ -355,8 +389,226 @@ export const ModelTreePanel: React.FC<ModelTreePanelProps> = ({
 
         {/* Panel Body */}
         <div className="flex-1 overflow-y-auto p-3 space-y-4">
+          {/* VAULT CATALOGUE TAB */}
+          {activeTab === 'vault' && (
+            <div className="space-y-3">
+              {/* Top Vault Header & Actions */}
+              <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>Stored Vault Catalogue</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-mono tabular-nums">
+                    {vaultItems.filter((i) => i.category === '3d-model' || i.category === 'molecular').length} 3D/Mol models · {vaultItems.length} total
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {onOpenUploadModal && (
+                    <button
+                      onClick={onOpenUploadModal}
+                      className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold transition-colors"
+                      title="Ingest new 3D model, PDB/mmCIF structure, or script into Vault"
+                    >
+                      + Ingest
+                    </button>
+                  )}
+                  {onOpenArchiveExplorer && (
+                    <button
+                      onClick={onOpenArchiveExplorer}
+                      className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[10px] font-medium transition-colors"
+                      title="Expand full-screen Vault Catalogue & AI Search"
+                    >
+                      Expand
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Search Input */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={vaultFilter}
+                  onChange={(e) => setVaultFilter(e.target.value)}
+                  placeholder="Filter catalogue models..."
+                  className="w-full bg-slate-950/70 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
+
+              {/* Category Filter Segmented Control */}
+              <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950/70 rounded-xl border border-slate-800/80">
+                {(
+                  [
+                    { id: 'all', label: 'All' },
+                    { id: 'molecular', label: 'Mol*' },
+                    { id: '3d-model', label: '3D Mesh' },
+                    { id: 'script', label: 'Code' },
+                  ] as const
+                ).map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setVaultCategory(cat.id as 'all' | AssetCategory)}
+                    className={`py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                      vaultCategory === cat.id
+                        ? 'bg-slate-800 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Vault Model Cards List (Sorted Newest First) */}
+              <div className="space-y-2">
+                {[...vaultItems]
+                  .sort((a, b) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime())
+                  .filter((item) => {
+                    if (vaultCategory === 'script') {
+                      if (item.category !== 'script' && item.category !== 'shader') return false;
+                    } else if (vaultCategory !== 'all' && item.category !== vaultCategory) {
+                      return false;
+                    }
+                    if (vaultFilter.trim()) {
+                      const q = vaultFilter.toLowerCase();
+                      return (
+                        item.name.toLowerCase().includes(q) ||
+                        item.format.toLowerCase().includes(q) ||
+                        item.description.toLowerCase().includes(q) ||
+                        item.tags.some((t) => t.toLowerCase().includes(q))
+                      );
+                    }
+                    return true;
+                  })
+                  .map((item) => {
+                    const isVisualizing =
+                      Boolean(activeModelName) &&
+                      (activeModelName.toLowerCase().includes(item.name.toLowerCase()) ||
+                        (item.pdbId && activeModelName.toLowerCase().includes(item.pdbId.toLowerCase())) ||
+                        (item.sampleType && activeModelName.toLowerCase().includes(item.sampleType.toLowerCase())));
+
+                    const isVisual3DOrMol = item.category === 'molecular' || item.category === '3d-model';
+                    const relTime = formatRelativeTime(item.dateAdded);
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-2.5 rounded-xl border transition-all ${
+                          isVisualizing
+                            ? 'bg-indigo-950/40 border-indigo-500/60 shadow-md'
+                            : 'bg-slate-800/50 hover:bg-slate-800/90 border-slate-700/60'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
+                              <span className="uppercase font-semibold text-slate-300">.{item.format}</span>
+                              <span aria-hidden="true">·</span>
+                              <span className="capitalize">{item.category.replace('-', ' ')}</span>
+                              <span aria-hidden="true">·</span>
+                              <span className="tabular-nums">{(item.size / 1024).toFixed(0)} KB</span>
+                            </div>
+                            <div
+                              onClick={() => onLoadVaultItem?.(item)}
+                              className="text-xs font-semibold text-white hover:text-indigo-300 cursor-pointer truncate mt-0.5"
+                              title={item.name}
+                            >
+                              {item.name}
+                            </div>
+                          </div>
+
+                          {isVisualizing && (
+                            <span className="text-[10px] font-semibold text-emerald-400 shrink-0">
+                              Active
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] text-slate-400 line-clamp-2 mt-1 leading-snug">
+                          {item.description}
+                        </p>
+
+                        {/* Pushed Date & Exact Timestamp Line */}
+                        <div
+                          className="mt-2 flex items-center justify-between text-[10px] text-slate-400 font-mono tabular-nums"
+                          title={`Pushed to Vault: ${formatVaultDateTime(item.dateAdded)} (${item.dateAdded})`}
+                        >
+                          <span>Pushed {formatVaultShortTimestamp(item.dateAdded)}</span>
+                          {relTime && <span className="text-indigo-300/90">{relTime}</span>}
+                        </div>
+
+                        <div className="mt-2 pt-2 border-t border-slate-700/50 flex items-center justify-between gap-1.5">
+                          <span className="text-[10px] text-slate-400 truncate">
+                            {item.blob ? 'IndexedDB Binary' : item.pdbId ? `RCSB ${item.pdbId}` : 'Vault Asset'}
+                          </span>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            {onDeleteVaultItem && (
+                              confirmDeleteId === item.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => {
+                                      onDeleteVaultItem(item.id);
+                                      setConfirmDeleteId(null);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-semibold transition-colors"
+                                    title="Confirm permanent removal from IndexedDB"
+                                  >
+                                    Confirm
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="px-1.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setConfirmDeleteId(item.id)}
+                                  className="p-1 rounded-lg bg-slate-900 hover:bg-rose-950/80 text-slate-400 hover:text-rose-400 transition-colors"
+                                  title="Remove model from IndexedDB database"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )
+                            )}
+                            <button
+                              onClick={() => onInspectVaultItem?.(item)}
+                              className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-medium transition-colors"
+                              title="Inspect metadata, code, or AI analysis"
+                            >
+                              Inspect
+                            </button>
+                            <button
+                              onClick={() => onLoadVaultItem?.(item)}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1 transition-colors ${
+                                isVisualizing
+                                  ? 'bg-emerald-600/30 border border-emerald-500/50 text-emerald-200'
+                                  : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                              }`}
+                              title={
+                                isVisual3DOrMol
+                                  ? 'Visualize model in 3D / Mol* Viewport'
+                                  : 'Open script in Code Studio'
+                              }
+                            >
+                              <Play className="w-2.5 h-2.5 fill-current" />
+                              <span>{isVisual3DOrMol ? 'Visualize' : 'Open'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
           {/* Molecular Structure View (Mol*) */}
-          {viewerMode === 'molstar' && molecularStats && (
+          {activeTab !== 'vault' && viewerMode === 'molstar' && molecularStats && (
             <div className="space-y-4">
               {/* If on Ligands Tab: Dedicated Ligand Manager */}
               {activeTab === 'ligands' ? (
