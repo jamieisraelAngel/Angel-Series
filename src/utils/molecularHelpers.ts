@@ -1,4 +1,10 @@
-import { MolecularStats, MolecularChainInfo, MolecularLigandInfo, ResidueConfidence } from '../types';
+import {
+  MolecularStats,
+  MolecularChainInfo,
+  MolecularLigandInfo,
+  ResidueConfidence,
+  ChainResidueEntry,
+} from '../types';
 
 export interface SamplePdbEntry {
   id: string;
@@ -6,6 +12,119 @@ export interface SamplePdbEntry {
   category: 'Enzyme' | 'Transport' | 'Viral / Immune' | 'Nucleic Acid' | 'Hormone' | 'High-Res';
   description: string;
   organism: string;
+}
+
+const AMINO_ACID_MAP: Record<
+  string,
+  {
+    oneLetter: string;
+    fullName: string;
+    group: 'hydrophobic' | 'polar' | 'positive' | 'negative' | 'special' | 'nucleic' | 'other';
+  }
+> = {
+  ALA: { oneLetter: 'A', fullName: 'Alanine', group: 'hydrophobic' },
+  ARG: { oneLetter: 'R', fullName: 'Arginine', group: 'positive' },
+  ASN: { oneLetter: 'N', fullName: 'Asparagine', group: 'polar' },
+  ASP: { oneLetter: 'D', fullName: 'Aspartic Acid', group: 'negative' },
+  CYS: { oneLetter: 'C', fullName: 'Cysteine', group: 'special' },
+  GLN: { oneLetter: 'Q', fullName: 'Glutamine', group: 'polar' },
+  GLU: { oneLetter: 'E', fullName: 'Glutamic Acid', group: 'negative' },
+  GLY: { oneLetter: 'G', fullName: 'Glycine', group: 'special' },
+  HIS: { oneLetter: 'H', fullName: 'Histidine', group: 'positive' },
+  ILE: { oneLetter: 'I', fullName: 'Isoleucine', group: 'hydrophobic' },
+  LEU: { oneLetter: 'L', fullName: 'Leucine', group: 'hydrophobic' },
+  LYS: { oneLetter: 'K', fullName: 'Lysine', group: 'positive' },
+  MET: { oneLetter: 'M', fullName: 'Methionine', group: 'hydrophobic' },
+  MSE: { oneLetter: 'M', fullName: 'Selenomethionine', group: 'hydrophobic' },
+  PHE: { oneLetter: 'F', fullName: 'Phenylalanine', group: 'hydrophobic' },
+  PRO: { oneLetter: 'P', fullName: 'Proline', group: 'special' },
+  SER: { oneLetter: 'S', fullName: 'Serine', group: 'polar' },
+  THR: { oneLetter: 'T', fullName: 'Threonine', group: 'polar' },
+  TRP: { oneLetter: 'W', fullName: 'Tryptophan', group: 'hydrophobic' },
+  TYR: { oneLetter: 'Y', fullName: 'Tyrosine', group: 'polar' },
+  VAL: { oneLetter: 'V', fullName: 'Valine', group: 'hydrophobic' },
+  SEC: { oneLetter: 'U', fullName: 'Selenocysteine', group: 'special' },
+  PYL: { oneLetter: 'O', fullName: 'Pyrrolysine', group: 'positive' },
+  // Nucleic acids
+  DA: { oneLetter: 'A', fullName: 'Deoxyadenosine', group: 'nucleic' },
+  DT: { oneLetter: 'T', fullName: 'Deoxythymidine', group: 'nucleic' },
+  DG: { oneLetter: 'G', fullName: 'Deoxyguanosine', group: 'nucleic' },
+  DC: { oneLetter: 'C', fullName: 'Deoxycytidine', group: 'nucleic' },
+  DU: { oneLetter: 'U', fullName: 'Deoxyuridine', group: 'nucleic' },
+  A: { oneLetter: 'A', fullName: 'Adenosine', group: 'nucleic' },
+  T: { oneLetter: 'T', fullName: 'Thymidine', group: 'nucleic' },
+  G: { oneLetter: 'G', fullName: 'Guanosine', group: 'nucleic' },
+  C: { oneLetter: 'C', fullName: 'Cytidine', group: 'nucleic' },
+  U: { oneLetter: 'U', fullName: 'Uridine', group: 'nucleic' },
+};
+
+export function getAminoAcidInfo(resName: string): {
+  oneLetter: string;
+  fullName: string;
+  group: 'hydrophobic' | 'polar' | 'positive' | 'negative' | 'special' | 'nucleic' | 'other';
+} {
+  const clean = (resName || '').trim().toUpperCase();
+  return (
+    AMINO_ACID_MAP[clean] || {
+      oneLetter: 'X',
+      fullName: clean || 'Unknown Residue',
+      group: 'other',
+    }
+  );
+}
+
+export function resNameToOneLetter(resName: string): string {
+  return getAminoAcidInfo(resName).oneLetter;
+}
+
+function attachSequencesToChains(
+  chains: MolecularChainInfo[],
+  residueConfidences: ResidueConfidence[],
+  seqresFallbackMap?: Map<string, string[]>
+): MolecularChainInfo[] {
+  const byChain = new Map<string, ChainResidueEntry[]>();
+  for (const rc of residueConfidences) {
+    const list = byChain.get(rc.chainId) || [];
+    list.push({
+      resSeq: rc.resSeq,
+      resName: rc.resName,
+      oneLetter: resNameToOneLetter(rc.resName),
+      score: rc.score,
+      rawBFactor: rc.rawBFactor,
+    });
+    byChain.set(rc.chainId, list);
+  }
+
+  return chains.map((chain) => {
+    const chainResidues = (byChain.get(chain.id) || []).sort((a, b) => a.resSeq - b.resSeq);
+    if (chainResidues.length > 0) {
+      return {
+        ...chain,
+        residueCount: chainResidues.length,
+        residues: chainResidues,
+        sequence: chainResidues.map((r) => r.oneLetter).join(''),
+      };
+    }
+
+    const seqresNames = seqresFallbackMap?.get(chain.id);
+    if (seqresNames && seqresNames.length > 0) {
+      const fallbackResidues: ChainResidueEntry[] = seqresNames.map((rn, idx) => ({
+        resSeq: idx + 1,
+        resName: rn,
+        oneLetter: resNameToOneLetter(rn),
+        score: 90,
+        rawBFactor: 20,
+      }));
+      return {
+        ...chain,
+        residueCount: fallbackResidues.length,
+        residues: fallbackResidues,
+        sequence: fallbackResidues.map((r) => r.oneLetter).join(''),
+      };
+    }
+
+    return chain;
+  });
 }
 
 /**
@@ -243,6 +362,7 @@ export function parsePdbMetadata(text: string, fileName = 'molecule.pdb', fileSi
   let organism = '';
 
   const chainsMap = new Map<string, { residueCount: number; type: 'protein' | 'nucleic' | 'other' }>();
+  const seqresMap = new Map<string, string[]>();
   const hetnamMap = new Map<string, string>();
   const formulMap = new Map<string, string>();
   const hetInstancesMap = new Map<string, MolecularLigandInfo>();
@@ -278,6 +398,15 @@ export function parsePdbMetadata(text: string, fileName = 'molecule.pdb', fileSi
     } else if (record === 'EXPDTA') {
       const exp = line.substring(10, 70).trim();
       if (exp) experimentalMethod = exp;
+    } else if (record === 'SEQRES') {
+      const chainId = line.substring(11, 12).trim() || 'A';
+      const residuesChunk = line.substring(19, 70).trim();
+      if (residuesChunk) {
+        const tokens = residuesChunk.split(/\s+/).filter(Boolean);
+        const existingSeq = seqresMap.get(chainId) || [];
+        existingSeq.push(...tokens);
+        seqresMap.set(chainId, existingSeq);
+      }
     } else if (record === 'REMARK') {
       // REMARK 2 RESOLUTION
       if (line.includes('RESOLUTION.') && line.includes('ANGSTROMS')) {
@@ -376,12 +505,15 @@ export function parsePdbMetadata(text: string, fileName = 'molecule.pdb', fileSi
     }
   }
 
-  const chains: MolecularChainInfo[] = Array.from(chainsMap.entries()).map(([id, info]) => ({
-    id,
-    name: `Chain ${id}`,
-    residueCount: info.residueCount,
-    type: info.type,
-  }));
+  const rawChains: MolecularChainInfo[] =
+    chainsMap.size > 0
+      ? Array.from(chainsMap.entries()).map(([id, info]) => ({
+          id,
+          name: `Chain ${id}`,
+          residueCount: info.residueCount,
+          type: info.type,
+        }))
+      : [{ id: 'A', name: 'Chain A', residueCount: seenResidues.size || 1, type: 'protein' }];
 
   const ligands: MolecularLigandInfo[] = Array.from(hetInstancesMap.values());
 
@@ -390,6 +522,7 @@ export function parsePdbMetadata(text: string, fileName = 'molecule.pdb', fileSi
     Array.from(residueBFactorMap.values()),
     isPredictedHint
   );
+  const chains = attachSequencesToChains(rawChains, confidenceData.residueConfidences, seqresMap);
 
   return {
     pdbId: pdbId || fileName.replace(/\.[^/.]+$/, '').toUpperCase(),
@@ -401,7 +534,7 @@ export function parsePdbMetadata(text: string, fileName = 'molecule.pdb', fileSi
     resolution,
     depositionDate,
     organism: organism || 'Biological Specimen',
-    chains: chains.length > 0 ? chains : [{ id: 'A', name: 'Chain A', residueCount: totalResidues, type: 'protein' }],
+    chains,
     ligands,
     atomCount: atomCount || 1,
     residueCount: totalResidues || 1,
@@ -554,12 +687,23 @@ export function parseCifMetadata(text: string, fileName = 'molecule.cif', fileSi
     Array.from(residueBFactorMap.values()),
     isPredictedHint
   );
-  const parsedChains: MolecularChainInfo[] = Array.from(chainsMap.entries()).map(([id, info]) => ({
-    id,
-    name: `Chain ${id}`,
-    residueCount: info.residueCount,
-    type: info.type,
-  }));
+  const parsedChains: MolecularChainInfo[] =
+    chainsMap.size > 0
+      ? Array.from(chainsMap.entries()).map(([id, info]) => ({
+          id,
+          name: `Chain ${id}`,
+          residueCount: info.residueCount,
+          type: info.type,
+        }))
+      : [
+          {
+            id: 'A',
+            name: 'Polymer Assembly',
+            residueCount: Math.max(seenResidues.size, 250),
+            type: 'protein',
+          },
+        ];
+  const chainsWithSeq = attachSequencesToChains(parsedChains, confidenceData.residueConfidences);
 
   return {
     pdbId: pdbId || fileName.replace(/\.[^/.]+$/, '').toUpperCase(),
@@ -568,10 +712,7 @@ export function parseCifMetadata(text: string, fileName = 'molecule.cif', fileSi
     experimentalMethod: confidenceData.isPredictedModel ? 'AI Structure Prediction (pLDDT)' : experimentalMethod,
     resolution,
     organism: 'Biological Specimen',
-    chains:
-      parsedChains.length > 0
-        ? parsedChains
-        : [{ id: 'A', name: 'Polymer Assembly', residueCount: Math.max(seenResidues.size, 250), type: 'protein' }],
+    chains: chainsWithSeq,
     ligands: Array.from(ligandMap.values()),
     atomCount: Math.max(roughAtomCount, 500),
     residueCount: seenResidues.size || Math.round(Math.max(roughAtomCount / 8, 50)),

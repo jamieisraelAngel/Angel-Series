@@ -128,11 +128,21 @@ export interface SceneSettings {
   ambient: boolean;
 }
 
+export interface ChainResidueEntry {
+  resSeq: number;
+  resName: string;
+  oneLetter: string;
+  score: number;
+  rawBFactor: number;
+}
+
 export interface MolecularChainInfo {
   id: string;
   name: string;
   residueCount: number;
   type: 'protein' | 'nucleic' | 'other';
+  sequence?: string;
+  residues?: ChainResidueEntry[];
 }
 
 export interface ChainHighlightConfig {
